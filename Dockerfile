@@ -1,5 +1,5 @@
 # Builder stage
-FROM rust:1.85-slim-bookworm AS builder
+FROM rust:1.93-slim-trixie AS builder
 
 # Install build dependencies required by crates (like reqwest/sqlx needing openssl via rustls-tls/native-tls fallback or similar)
 RUN apt-get update && apt-get install -y \
@@ -16,7 +16,7 @@ COPY . .
 RUN cargo build --release
 
 # Final runtime image
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 # Install runtime dependencies required for HTTPS requests (reqwest) and metrics / db connections
 RUN apt-get update && apt-get install -y \

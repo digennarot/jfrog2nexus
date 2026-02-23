@@ -80,6 +80,35 @@ By default, the application looks for a configuration file located at `.j2n/j2n.
 jfrog2nexus config validate --config .j2n/j2n.yaml
 ```
 
+**Example `.j2n/j2n.yaml`:**
+```yaml
+jfrog:
+  url: "https://jfrog.example.com"
+  # Authentication can be provided via J2N_JFROG_TOKEN env var, 
+  # or through a file supporting dynamic token refresh:
+  token_file: "/etc/secrets/jfrog_token"
+nexus:
+  url: "https://nexus.example.com"
+  # Authentication can be provided via J2N_NEXUS_TOKEN env var,
+  # or through a file supporting dynamic token refresh:
+  token_file: "/etc/secrets/nexus_token"
+proxy: # Optional
+  url: "http://proxy.example.com:8080"
+mappings:
+  - source: "docker-local"
+    target: "docker-hosted"
+    type: "docker"
+  - source: "maven-releases"
+    target: "maven-releases"
+    type: "maven"
+```
+
+### Environment Variables
+
+*   `J2N_JFROG_TOKEN`: JFrog access token (if `token_file` is not configured).
+*   `J2N_NEXUS_TOKEN`: Nexus access token (if `token_file` is not configured).
+*   `J2N_ALLOW_HTTP`: Set to `true` to disable the default HTTPS requirement for upstream URLs (useful for local testing).
+
 The state database is local to your environment and located at `.j2n/state.db` by default.
 
 ## License
