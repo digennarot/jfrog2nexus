@@ -31,32 +31,61 @@ source ~/.jfrog2nexus-completion.bash
 1. **Environment Variables**: For secrets and sensitive information.
 2. **YAML Configuration File**: For mapping repositories and setting API endpoints.
 
-### Environment Variables
-The application uses the following environment variables. Note that API keys from earlier versions have been replaced with dedicated tokens:
+### Docker Quick Start (Recommended)
 
-- `J2N_JFROG_TOKEN`: **Required**. The secret token used for JFrog Artifactory authentication.
-- `J2N_NEXUS_TOKEN`: **Required**. The secret token used for Sonatype Nexus authentication.
-- `J2N_ALLOW_HTTP`: **Optional**. Set to `true` to bypass HTTPS enforcement. This is primarily useful for local testing setups or containers without TLS.
+Since `jfrog2nexus` is available as a Docker package (`ghcr.io/digennarot/jfrog2nexus`), the easiest way to configure and run it is using Docker Compose. Make sure you mount your config file and define your tokens. 
 
-Example:
-```bash
-export J2N_JFROG_TOKEN="your-jfrog-token"
-export J2N_NEXUS_TOKEN="your-nexus-token"
+**Using a Token File (Most Secure)**: For production or environments where environment variables could leak or are immutable, mounting the tokens as a file is the recommended approach.
+
+Here is a simple `docker-compose.yml` demonstrating a secure setup mapping a local `.j2n/` directory:
+
+```yaml
+services:
+  jfrog2nexus:
+    image: ghcr.io/digennarot/jfrog2nexus:latest
+    volumes:
+      - ./.j2n/j2n.yaml:/.j2n/j2n.yaml:ro
+      - ./.j2n/jfrog_token:/run/secrets/jfrog_token:ro
+      - ./.j2n/nexus_token:/run/secrets/nexus_token:ro
 ```
 
+### Environment Variables Fallback 
+
+For quick local tests without file mounting, you can still provide tokens directly as environment variables:
+
+- `J2N_JFROG_TOKEN`: The secret token used for JFrog Artifactory authentication.
+- `J2N_NEXUS_TOKEN`: The secret token used for Sonatype Nexus authentication.
+- `J2N_ALLOW_HTTP`: **Optional**. Set to `true` to bypass HTTPS enforcement. This is primarily useful for local testing.
+
 ### Configuration File (`.j2n/j2n.yaml`)
+
 By default, the application looks for a configuration file at `.j2n/j2n.yaml`.
 This file maps your JFrog repositories to Nexus repositories and defines endpoints. 
 
-Here is a comprehensive example configuration showcasing all available properties:
+#### Minimal Example
+
+This relies on environment variables (`J2N_JFROG_TOKEN`, `J2N_NEXUS_TOKEN`) for authentication:
 
 ```yaml
 jfrog:
   url: "https://jfrog.example.com"
-  token_file: "/run/secrets/jfrog_token" # Optional: alternative to J2N_JFROG_TOKEN
 nexus:
   url: "https://nexus.example.com"
-  token_file: "/run/secrets/nexus_token" # Optional: alternative to J2N_NEXUS_TOKEN
+mappings:
+  - source: "docker-local"
+    target: "docker-hosted"
+    type: "docker"
+```
+
+#### Full Example (Secure Token Files & Proxies)
+
+```yaml
+jfrog:
+  url: "https://jfrog.example.com"
+  token_file: "/run/secrets/jfrog_token" # Most secure
+nexus:
+  url: "https://nexus.example.com"
+  token_file: "/run/secrets/nexus_token" # Most secure
 mappings:
   - source: "docker-local"
     target: "docker-hosted"
@@ -71,10 +100,10 @@ proxy: # Optional: HTTP proxy configuration
 **Supported Repository Types:**
 The `type` field in `mappings` must be precisely one of the following: `docker`, `maven`, `pypi`, `npm`, `nuget`, `helm`, `go`, or `raw`.
 
-To validate your configuration and ensure connections are correctly authenticated, run:
+### Validating Configuration
+
+To validate your configuration and ensure connections are correctly authenticated before actually running a sync, run:
 ```bash
-jfrog2nexus config validate
-# Or specify a custom config path:
 jfrog2nexus config validate -c path/to/my-config.yaml
 ```
 
@@ -82,50 +111,42 @@ jfrog2nexus config validate -c path/to/my-config.yaml
 
 ## 3. Usage & Commands
 
-The CLI provides several subcommands for different operations. 
+The CLI provides several subcommands for different operations. Under the recommended Docker setup, you'll prepend commands with `docker compose run jfrog2nexus`.
 
-### `sync`
-The core command that handles artifact synchronization based on your mappings.
+### 1. Test your configuration (Dry Run)
+
+The core command is `sync`, which handles artifact synchronization based on your mappings. Always use `--dry-run` first. This triggers the artifact scanning engine to contact the repositories and output a `SyncPlan` showing exactly what *would* be moved, without making any modifications.
 
 ```bash
-jfrog2nexus sync [OPTIONS]
+docker compose run jfrog2nexus sync --dry-run
 ```
 
-**Options:**
-- `-c, --config <CONFIG>`: Path to the configuration file (default: `.j2n/j2n.yaml`).
-- `--dry-run`: Run the sync process without actually moving any files, useful for testing out configs.
+### 2. Run the migration
+
+Once you are satisfied with the dry run output, execute the actual migration:
+
+```bash
+docker compose run jfrog2nexus sync
+```
+
+**Common Sync Options:**
+- `--config <CONFIG>`: Path to the configuration file (default: `.j2n/j2n.yaml`).
 - `--resume-by-checksum`: Resume partially completed transfers. The tool utilizes an embedded SQLite state database to determine what's already been synced.
-- `--max-kbps <MAX_KBPS>`: Maximum transfer rate in KB/s (default is `0` for unlimited).
-- `-n, --concurrency <CONCURRENCY>`: Max number of concurrent asynchronous transfers (default: `50`).
-- `--metrics-addr <METRICS_ADDR>`: Bind address for metrics server (default: `127.0.0.1:9090`).
 
-### `status`
-Query the real-time status of your ongoing migrations directly from the tracking database or the metrics server.
+*(Run `docker compose run jfrog2nexus sync --help` to see all advanced options like rate limiting and concurrency tuning.)*
 
+### 3. Check status and reports
+
+You can query the real-time status of your ongoing migrations directly from the tracking database, or generate audit reports.
+
+**Query Status:**
 ```bash
-jfrog2nexus status [OPTIONS]
+docker compose run jfrog2nexus status
 ```
 
-**Options:**
-- `--db-path <DB_PATH>`: Path to the embedded SQLite state database (default: `.j2n/state.db`).
-- `--metrics-url <METRICS_URL>`: URL of the metrics server for real-time Prometheus stats (default: `http://127.0.0.1:9090`).
-
-### `report`
-Generate audit and migration reports based on synchronization history.
-
+**Generate CSV Report:**
 ```bash
-jfrog2nexus report generate [OPTIONS]
-```
-
-**Options:**
-- `--db-path <DB_PATH>`: Path to the state database to read from (default: `.j2n/state.db`).
-- `-o, --output <OUTPUT>`: Output path for the CSV report (default: `migration_report.csv`).
-
-### `config validate`
-Check whether your configuration file is valid, verifying mappings, endpoints, and token availability without changing any data.
-
-```bash
-jfrog2nexus config validate -c path/to/cfg.yaml
+docker compose run jfrog2nexus report generate -o migration_report.csv
 ```
 
 ---

@@ -221,12 +221,8 @@ async fn test_migration_multi_format_flow() {
     );
 
     // Each artifact should have been successfully transferred (6 total)
-    let transfer_count = stderr
-        .matches("Successfully transferred artifact")
-        .count()
-        + stdout
-            .matches("Successfully transferred artifact")
-            .count();
+    let transfer_count = stderr.matches("Successfully transferred artifact").count()
+        + stdout.matches("Successfully transferred artifact").count();
     assert_eq!(
         transfer_count, 6,
         "Expected 6 successful transfers (one per format), got {}. STDERR:\n{}",
@@ -247,17 +243,22 @@ async fn test_real_services_flow() {
 
     // GIVEN: Real services are running and bootstrapped
     let ctx = common::TestContext::new().await;
-    
+
     // Read tokens from files created during bootstrap
     let jfrog_token = "password"; // Default for admin
-    let nexus_token = std::fs::read_to_string("tests/.nexus_password").expect("Failed to read nexus password file").trim().to_string();
+    let nexus_token = std::fs::read_to_string("tests/.nexus_password")
+        .expect("Failed to read nexus password file")
+        .trim()
+        .to_string();
 
     // WHEN: We execute the sync for Maven and Docker
     let mut cmd = Command::new("cargo");
-    cmd.arg("run").arg("--")
-       .arg("sync")
-       .arg("--config").arg(&ctx.config_path);
-    
+    cmd.arg("run")
+        .arg("--")
+        .arg("sync")
+        .arg("--config")
+        .arg(&ctx.config_path);
+
     cmd.env("J2N_JFROG_TOKEN", jfrog_token);
     cmd.env("J2N_NEXUS_TOKEN", nexus_token);
     cmd.env("J2N_ALLOW_HTTP", "true");
@@ -268,15 +269,17 @@ async fn test_real_services_flow() {
     // THEN: Both Maven and Docker artifacts should be transferred
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    
+
     if !output.status.success() {
         eprintln!("STDOUT:\n{}", stdout);
         eprintln!("STDERR:\n{}", stderr);
     }
-    
+
     assert!(output.status.success());
     // Maven check
     assert!(stderr.contains("Successfully transferred artifact") && stderr.contains("maven-local"));
     // Docker check
-    assert!(stderr.contains("Successfully transferred artifact") && stderr.contains("docker-local"));
+    assert!(
+        stderr.contains("Successfully transferred artifact") && stderr.contains("docker-local")
+    );
 }
