@@ -1,3 +1,26 @@
 /target
 .j2n/
 secrets/
+
+# Environment Variables
+.env
+.env.*
+!.env.example
+
+# Test Secrets
+tests/.nexus_password
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.agent
+_bmad
+_bmad-output
