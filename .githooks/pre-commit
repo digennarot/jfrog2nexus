@@ -1,0 +1,13 @@
+#!/bin/sh
+if ! command -v cargo-fmt >/dev/null 2>&1 && ! cargo fmt --version >/dev/null 2>&1; then
+  echo "cargo fmt not found, skipping formatting check."
+  exit 0
+fi
+
+cargo fmt --all -- --check
+if [ $? -ne 0 ]; then
+  echo "Formatting failed, running cargo fmt..."
+  cargo fmt
+  echo "Please stage the changes and try committing again."
+  exit 1
+fi
