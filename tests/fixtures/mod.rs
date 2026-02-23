@@ -1,5 +1,7 @@
 //! Test data factories and fixtures
 
+#![allow(dead_code)]
+
 pub struct ArtifactFactory {
     pub repo: String,
     pub path: String,

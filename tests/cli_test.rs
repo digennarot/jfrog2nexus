@@ -4,7 +4,7 @@ use std::process::Command;
 
 #[test]
 fn test_help_output() -> Result<()> {
-    let mut cmd = Command::cargo_bin("jfrog2nexus")?;
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("jfrog2nexus"));
     cmd.arg("--help");
     cmd.assert()
         .success()
@@ -15,7 +15,7 @@ fn test_help_output() -> Result<()> {
 
 #[test]
 fn test_config_help_output() -> Result<()> {
-    let mut cmd = Command::cargo_bin("jfrog2nexus")?;
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("jfrog2nexus"));
     cmd.arg("config").arg("--help");
     cmd.assert()
         .success()

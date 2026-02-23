@@ -98,7 +98,7 @@ impl StateStore {
                 let stored_sha256: String = row.get(0);
                 if let Some(expected) = expected_sha256 {
                     let clean_expected = if expected.contains(':') {
-                        expected.split(':').last().unwrap_or(expected)
+                        expected.split(':').next_back().unwrap_or(expected)
                     } else {
                         expected
                     };

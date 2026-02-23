@@ -1,5 +1,7 @@
 //! Shared integration test utilities
 
+#![allow(dead_code, unused_imports)]
+
 use reqwest::Client;
 use std::time::Duration;
 use tracing::info;

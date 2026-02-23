@@ -413,7 +413,10 @@ impl TransferOrchestrator {
         if let Some(ref expected_hash) = artifact.sha256 {
             // Clean up Artifactory's varied hash formats if necessary (e.g. sha256: or just hex)
             let clean_expected = if expected_hash.contains(':') {
-                expected_hash.split(':').last().unwrap_or(expected_hash)
+                expected_hash
+                    .split(':')
+                    .next_back()
+                    .unwrap_or(expected_hash)
             } else {
                 expected_hash
             };
