@@ -1,13 +1,13 @@
-use std::pin::Pin;
-use std::sync::Arc;
-use tokio::sync::{Semaphore, RwLock};
-use tracing::{info, error, info_span, warn};
 use crate::config::{JfrogConfig, NexusConfig};
 use crate::engine::scanner::{Artifact, SyncPlan};
 use crate::engine::TransferError;
-use secrecy::ExposeSecret;
 use reqwest::Client;
+use secrecy::ExposeSecret;
+use std::pin::Pin;
+use std::sync::Arc;
+use tokio::sync::{RwLock, Semaphore};
 use tracing::Instrument;
+use tracing::{error, info, info_span, warn};
 
 pub struct TransferOrchestrator {
     client: Arc<Client>,
@@ -22,9 +22,9 @@ pub struct TransferOrchestrator {
 
 impl TransferOrchestrator {
     pub fn new(
-        client: Arc<Client>, 
-        jfrog_config: JfrogConfig, 
-        nexus_config: NexusConfig, 
+        client: Arc<Client>,
+        jfrog_config: JfrogConfig,
+        nexus_config: NexusConfig,
         max_concurrency: usize,
         state_store: Option<Arc<crate::engine::state_store::StateStore>>,
         rate_limiter: Option<Arc<crate::engine::throttler::GlobalRateLimiter>>,
@@ -37,32 +37,48 @@ impl TransferOrchestrator {
             state_store,
             rate_limiter,
             refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
-            last_refresh: Arc::new(RwLock::new(std::time::Instant::now() - std::time::Duration::from_secs(3600))),
+            last_refresh: Arc::new(RwLock::new(
+                std::time::Instant::now() - std::time::Duration::from_secs(3600),
+            )),
         }
     }
 
     pub async fn execute_plan(&self, plan: SyncPlan) -> Result<(), TransferError> {
-        info!(total_artifacts = plan.artifacts.len(), "Starting transfer execution");
-        
+        info!(
+            total_artifacts = plan.artifacts.len(),
+            "Starting transfer execution"
+        );
+
         let mut handlers = Vec::new();
-        
+
         for artifact in plan.artifacts {
             // --- Optimization: Skip before spawning if already done ---
             if let Some(ref store) = self.state_store {
-                if store.is_completed(&artifact.source_repo, &artifact.path, artifact.sha256.as_deref()).await {
+                if store
+                    .is_completed(
+                        &artifact.source_repo,
+                        &artifact.path,
+                        artifact.sha256.as_deref(),
+                    )
+                    .await
+                {
                     continue;
                 }
             }
             // ----------------------------------------------------------
 
-            let permit = self.concurrency_limit.clone().acquire_owned().await
+            let permit = self
+                .concurrency_limit
+                .clone()
+                .acquire_owned()
+                .await
                 .map_err(|_| TransferError::Config("Semaphore closed".to_string()))?;
             let jfrog_config = self.jfrog_config.clone();
             let nexus_config = self.nexus_config.clone();
             let state_store = self.state_store.clone();
             let rate_limiter = self.rate_limiter.clone();
             let client = self.client.clone();
-            
+
             let source_repo = artifact.source_repo.clone();
             let target_repo = artifact.target_repo.clone();
             let path = artifact.path.clone();
@@ -81,7 +97,7 @@ impl TransferOrchestrator {
                         let artifact = artifact.clone();
                         let state_store = state_store.clone();
                         let rate_limiter = rate_limiter.clone();
-                        
+
                         let refresh_lock = refresh_lock.clone();
                         let last_refresh = last_refresh.clone();
 
@@ -89,9 +105,9 @@ impl TransferOrchestrator {
                             // Read current config from locks
                             let jf = jfrog_config.read().await.clone();
                             let nx = nexus_config.read().await.clone();
-                            
+
                             let result = Self::transfer_artifact(&client, &jf, &nx, artifact.clone(), state_store.clone(), rate_limiter.clone()).await;
-                            
+
                             if let Err(TransferError::Unauthorized(repo)) = result {
                                 // 1. Thundering herd protection: only one refresh at a time
                                 let _guard = refresh_lock.lock().await;
@@ -105,7 +121,7 @@ impl TransferOrchestrator {
                                 }
 
                                 warn!(%repo, path = %artifact.path, "Unauthorized, attempting token refresh");
-                                
+
                                 let mut updated = false;
                                 if repo == "JFrog" {
                                     let mut jf_lock = jfrog_config.write().await;
@@ -154,7 +170,7 @@ impl TransferOrchestrator {
                                 } else {
                                     warn!(%repo, "Token refresh attempted but no new token found");
                                 }
-                                
+
                                 return Err(TransferError::Unauthorized(repo));
                             }
                             result
@@ -164,38 +180,44 @@ impl TransferOrchestrator {
             });
             handlers.push(handle);
         }
-        
+
         for handle in handlers {
             match handle.await {
                 Ok(Ok(_)) => (),
                 Ok(Err(e)) => {
                     error!(error = %e, "Artifact transfer failed");
-                    // Strategy: log and continue for now. 
+                    // Strategy: log and continue for now.
                     // In the future, we might stop on critical errors (401, etc)
                 }
                 Err(e) => error!(error = %e, "Task join error"),
             }
         }
-        
+
         info!("Transfer execution complete");
         Ok(())
     }
 
-    async fn handle_response(resp: reqwest::Response, repo_type: &str) -> Result<reqwest::Response, TransferError> {
+    async fn handle_response(
+        resp: reqwest::Response,
+        repo_type: &str,
+    ) -> Result<reqwest::Response, TransferError> {
         let status = resp.status();
-        
+
         // Record status code metric
         metrics::counter!("j2n_transfer_status_codes_total", "repo" => repo_type.to_string(), "status" => status.to_string()).increment(1);
 
         if status.is_success() {
             return Ok(resp);
         }
-        
+
         if status == reqwest::StatusCode::UNAUTHORIZED {
             return Err(TransferError::Unauthorized(repo_type.to_string()));
         }
-        
-        let body = resp.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+
+        let body = resp
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unknown error".to_string());
         let body_preview = if body.len() > 500 {
             format!("{}... [truncated]", &body[..500])
         } else {
@@ -203,8 +225,14 @@ impl TransferOrchestrator {
         };
 
         match repo_type {
-            "JFrog" => Err(TransferError::JfrogApi(format!("{} - {}", status, body_preview))),
-            _ => Err(TransferError::NexusApi(format!("{} - {}", status, body_preview))),
+            "JFrog" => Err(TransferError::JfrogApi(format!(
+                "{} - {}",
+                status, body_preview
+            ))),
+            _ => Err(TransferError::NexusApi(format!(
+                "{} - {}",
+                status, body_preview
+            ))),
         }
     }
 
@@ -216,11 +244,18 @@ impl TransferOrchestrator {
         state_store: Option<Arc<crate::engine::state_store::StateStore>>,
         rate_limiter: Option<Arc<crate::engine::throttler::GlobalRateLimiter>>,
     ) -> Result<(), TransferError> {
-        use crate::engine::target_mapper::{TargetMapper, TargetApiAction};
-        
+        use crate::engine::target_mapper::{TargetApiAction, TargetMapper};
+
         // --- Added for Story 2.2: Resumable Transfers ---
         if let Some(ref store) = state_store {
-            if store.is_completed(&artifact.source_repo, &artifact.path, artifact.sha256.as_deref()).await {
+            if store
+                .is_completed(
+                    &artifact.source_repo,
+                    &artifact.path,
+                    artifact.sha256.as_deref(),
+                )
+                .await
+            {
                 info!(path = %artifact.path, "Artifact already completed in StateStore, skipping");
                 return Ok(());
             }
@@ -235,21 +270,29 @@ impl TransferOrchestrator {
         // 2. Download stream from JFrog
         let response = client
             .get(source_url)
-            .header("Authorization", format!("Bearer {}", jfrog_config.token.expose_secret()))
+            .header(
+                "Authorization",
+                format!("Bearer {}", jfrog_config.token.expose_secret()),
+            )
             .send()
             .await?;
 
         let response = Self::handle_response(response, "JFrog").await?;
 
         let stream = response.bytes_stream();
-        
+
         // --- Added for Story 3.2: Metrics ---
-        let stream = crate::observability::metric_stream::MetricStream::new(stream, artifact.source_repo.clone());
+        let stream = crate::observability::metric_stream::MetricStream::new(
+            stream,
+            artifact.source_repo.clone(),
+        );
         // ------------------------------------
 
         // --- Added for Story 2.4: Transfer Rate Throttling ---
         let stream = if let Some(limiter) = rate_limiter {
-            Box::pin(crate::engine::throttler::ThrottledStream::new(stream, limiter)) as Pin<Box<dyn futures::Stream<Item = _> + Send>>
+            Box::pin(crate::engine::throttler::ThrottledStream::new(
+                stream, limiter,
+            )) as Pin<Box<dyn futures::Stream<Item = _> + Send>>
         } else {
             Box::pin(stream) as Pin<Box<dyn futures::Stream<Item = _> + Send>>
         };
@@ -268,43 +311,63 @@ impl TransferOrchestrator {
                 let target_url = nexus_config.url.join(url)?;
                 let upload_response = client
                     .put(target_url)
-                    .header("Authorization", format!("Bearer {}", nexus_config.token.expose_secret()))
+                    .header(
+                        "Authorization",
+                        format!("Bearer {}", nexus_config.token.expose_secret()),
+                    )
                     .body(reqwest::Body::wrap_stream(hashing_stream))
                     .send()
                     .await?;
 
                 Self::handle_response(upload_response, "Nexus").await?;
             }
-            TargetApiAction::DockerBlob { ref name, ref digest } => {
+            TargetApiAction::DockerBlob {
+                ref name,
+                ref digest,
+            } => {
                 // Docker V2 Blob Push: POST then PUT
-                let initiate_path = format!("repository/{}/v2/{}/blobs/uploads/", artifact.target_repo, name);
+                let initiate_path = format!(
+                    "repository/{}/v2/{}/blobs/uploads/",
+                    artifact.target_repo, name
+                );
                 let initiate_url = nexus_config.url.join(&initiate_path)?;
 
                 let initiate_resp = client
                     .post(initiate_url)
-                    .header("Authorization", format!("Bearer {}", nexus_config.token.expose_secret()))
+                    .header(
+                        "Authorization",
+                        format!("Bearer {}", nexus_config.token.expose_secret()),
+                    )
                     .send()
                     .await?;
 
                 let initiate_resp = Self::handle_response(initiate_resp, "Nexus").await?;
 
-                let location = initiate_resp.headers()
+                let location = initiate_resp
+                    .headers()
                     .get(reqwest::header::LOCATION)
                     .and_then(|l| l.to_str().ok())
-                    .ok_or_else(|| TransferError::NexusApi("Missing Location header in Docker blob upload initiation".to_string()))?;
+                    .ok_or_else(|| {
+                        TransferError::NexusApi(
+                            "Missing Location header in Docker blob upload initiation".to_string(),
+                        )
+                    })?;
 
                 let upload_url = if location.starts_with("http") {
                     url::Url::parse(location)?
                 } else {
                     nexus_config.url.join(location)?
                 };
-                
+
                 let mut upload_url = upload_url;
                 upload_url.query_pairs_mut().append_pair("digest", digest);
 
                 let upload_response = client
                     .put(upload_url)
-                    .header("Authorization", format!("Bearer {}", nexus_config.token.expose_secret()))
+                    .header(
+                        "Authorization",
+                        format!("Bearer {}", nexus_config.token.expose_secret()),
+                    )
                     .header("Content-Type", "application/octet-stream")
                     .body(reqwest::Body::wrap_stream(hashing_stream))
                     .send()
@@ -312,14 +375,26 @@ impl TransferOrchestrator {
 
                 Self::handle_response(upload_response, "Nexus").await?;
             }
-            TargetApiAction::DockerManifest { ref name, ref reference } => {
-                let manifest_path = format!("repository/{}/v2/{}/manifests/{}", artifact.target_repo, name, reference);
+            TargetApiAction::DockerManifest {
+                ref name,
+                ref reference,
+            } => {
+                let manifest_path = format!(
+                    "repository/{}/v2/{}/manifests/{}",
+                    artifact.target_repo, name, reference
+                );
                 let manifest_url = nexus_config.url.join(&manifest_path)?;
 
                 let upload_response = client
                     .put(manifest_url)
-                    .header("Authorization", format!("Bearer {}", nexus_config.token.expose_secret()))
-                    .header("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
+                    .header(
+                        "Authorization",
+                        format!("Bearer {}", nexus_config.token.expose_secret()),
+                    )
+                    .header(
+                        "Content-Type",
+                        "application/vnd.docker.distribution.manifest.v2+json",
+                    )
                     .body(reqwest::Body::wrap_stream(hashing_stream))
                     .send()
                     .await?;
@@ -334,7 +409,7 @@ impl TransferOrchestrator {
             let hasher_lock = hasher.lock().unwrap();
             format!("{:x}", hasher_lock.clone().finalize())
         };
-        
+
         if let Some(ref expected_hash) = artifact.sha256 {
             // Clean up Artifactory's varied hash formats if necessary (e.g. sha256: or just hex)
             let clean_expected = if expected_hash.contains(':') {
@@ -345,26 +420,32 @@ impl TransferOrchestrator {
 
             if calculated_hash != clean_expected {
                 error!(path = %artifact.path, %calculated_hash, %expected_hash, "Hash mismatch detected!");
-                
+
                 // Story 2.1 AC5: Delete target file and error
-                if let Err(e) = Self::delete_target(client, nexus_config, &artifact, &action).await {
+                if let Err(e) = Self::delete_target(client, nexus_config, &artifact, &action).await
+                {
                     error!(error = %e, path = %artifact.path, "Failed to delete corrupted target file after hash mismatch!");
                 }
-                
-                return Err(TransferError::Config(format!("Data corruption: hash mismatch for {}. Expected {}, got {}", artifact.path, expected_hash, calculated_hash)));
+
+                return Err(TransferError::Config(format!(
+                    "Data corruption: hash mismatch for {}. Expected {}, got {}",
+                    artifact.path, expected_hash, calculated_hash
+                )));
             }
         }
         // --------------------------------------------
 
         // --- Added for Story 2.2: Mark as complete ---
         if let Some(ref store) = state_store {
-            store.mark_completed(
-                &artifact.source_repo, 
-                &artifact.path, 
-                &artifact.target_repo, 
-                &calculated_hash, 
-                artifact.size
-            ).await?;
+            store
+                .mark_completed(
+                    &artifact.source_repo,
+                    &artifact.path,
+                    &artifact.target_repo,
+                    &calculated_hash,
+                    artifact.size,
+                )
+                .await?;
         }
         // ----------------------------------------------
 
@@ -379,25 +460,35 @@ impl TransferOrchestrator {
         action: &crate::engine::target_mapper::TargetApiAction,
     ) -> Result<(), TransferError> {
         use crate::engine::target_mapper::TargetApiAction;
-        
+
         let delete_url = match action {
             TargetApiAction::Put { url } => nexus_config.url.join(url)?,
             TargetApiAction::DockerBlob { name, digest } => {
-                let path = format!("repository/{}/v2/{}/blobs/{}", artifact.target_repo, name, digest);
+                let path = format!(
+                    "repository/{}/v2/{}/blobs/{}",
+                    artifact.target_repo, name, digest
+                );
                 nexus_config.url.join(&path)?
             }
             TargetApiAction::DockerManifest { name, reference } => {
-                let path = format!("repository/{}/v2/{}/manifests/{}", artifact.target_repo, name, reference);
+                let path = format!(
+                    "repository/{}/v2/{}/manifests/{}",
+                    artifact.target_repo, name, reference
+                );
                 nexus_config.url.join(&path)?
             }
         };
 
         info!(url = %delete_url, "Cleaning up target after hash mismatch");
-        client.delete(delete_url)
-            .header("Authorization", format!("Bearer {}", nexus_config.token.expose_secret()))
+        client
+            .delete(delete_url)
+            .header(
+                "Authorization",
+                format!("Bearer {}", nexus_config.token.expose_secret()),
+            )
             .send()
             .await?;
-            
+
         Ok(())
     }
 
@@ -414,7 +505,7 @@ impl TransferOrchestrator {
         }
 
         info!(repo = %repo_type, "Refreshing API tokens from file or environment");
-        
+
         if repo_type == "JFrog" {
             let mut jf = self.jfrog_config.write().await;
             let mut new_token = None;
@@ -468,7 +559,7 @@ impl TransferOrchestrator {
                 }
             }
         }
-        
+
         // Update last refresh timestamp
         {
             let mut last = self.last_refresh.write().await;
@@ -482,26 +573,28 @@ impl TransferOrchestrator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{JfrogConfig, NexusConfig, RepoType};
+    use url::Url;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
-    use url::Url;
-    use crate::config::{JfrogConfig, NexusConfig, RepoType};
 
     #[tokio::test]
     async fn test_transfer_maven_success() {
         let jfrog_server = MockServer::start().await;
         let nexus_server = MockServer::start().await;
-        
+
         // Mock JFrog download
         Mock::given(method("GET"))
             .and(path("/maven-local/com/example/lib/1.0/lib-1.0.jar"))
             .respond_with(ResponseTemplate::new(200).set_body_string("artifact-content"))
             .mount(&jfrog_server)
             .await;
-            
+
         // Mock Nexus upload
         Mock::given(method("PUT"))
-            .and(path("/repository/maven-target/com/example/lib/1.0/lib-1.0.jar"))
+            .and(path(
+                "/repository/maven-target/com/example/lib/1.0/lib-1.0.jar",
+            ))
             .respond_with(ResponseTemplate::new(201))
             .mount(&nexus_server)
             .await;
@@ -516,10 +609,11 @@ mod tests {
             token: "nexus-token".into(),
             token_file: None,
         };
-        
+
         let client = Arc::new(Client::new());
-        let orchestrator = TransferOrchestrator::new(client, jfrog_config, nexus_config, 1, None, None);
-        
+        let orchestrator =
+            TransferOrchestrator::new(client, jfrog_config, nexus_config, 1, None, None);
+
         let artifact = Artifact {
             source_repo: "maven-local".to_string(),
             target_repo: "maven-target".to_string(),
@@ -528,12 +622,12 @@ mod tests {
             sha256: None,
             repo_type: RepoType::Maven,
         };
-        
+
         let plan = SyncPlan {
             artifacts: vec![artifact],
             total_size: 16,
         };
-        
+
         let result = orchestrator.execute_plan(plan).await;
         assert!(result.is_ok());
     }
@@ -542,7 +636,7 @@ mod tests {
     async fn test_transfer_docker_blob_success() {
         let jfrog_server = MockServer::start().await;
         let nexus_server = MockServer::start().await;
-        
+
         let body = "blob-content";
         let expected_hash = "849c6f2dfac02eec5a2123611a91316496924e2c608f7f1d4411130638520268";
 
@@ -552,11 +646,15 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_string(body))
             .mount(&jfrog_server)
             .await;
-            
+
         // Mock Nexus upload initiation
         Mock::given(method("POST"))
-            .and(path("/repository/docker-target/v2/library/hello-world/blobs/uploads/"))
-            .respond_with(ResponseTemplate::new(202).append_header("Location", "/v2/upload/session-123"))
+            .and(path(
+                "/repository/docker-target/v2/library/hello-world/blobs/uploads/",
+            ))
+            .respond_with(
+                ResponseTemplate::new(202).append_header("Location", "/v2/upload/session-123"),
+            )
             .mount(&nexus_server)
             .await;
 
@@ -578,10 +676,11 @@ mod tests {
             token: "nexus".into(),
             token_file: None,
         };
-        
+
         let client = Arc::new(Client::new());
-        let orchestrator = TransferOrchestrator::new(client, jfrog_config, nexus_config, 1, None, None);
-        
+        let orchestrator =
+            TransferOrchestrator::new(client, jfrog_config, nexus_config, 1, None, None);
+
         let artifact = Artifact {
             source_repo: "docker-local".to_string(),
             target_repo: "docker-target".to_string(),
@@ -590,8 +689,13 @@ mod tests {
             sha256: Some(expected_hash.to_string()),
             repo_type: RepoType::Docker,
         };
-        
-        let result = orchestrator.execute_plan(SyncPlan { artifacts: vec![artifact], total_size: body.len() as u64 }).await;
+
+        let result = orchestrator
+            .execute_plan(SyncPlan {
+                artifacts: vec![artifact],
+                total_size: body.len() as u64,
+            })
+            .await;
         assert!(result.is_ok());
     }
 
@@ -599,15 +703,19 @@ mod tests {
     async fn test_transfer_docker_manifest_success() {
         let jfrog_server = MockServer::start().await;
         let nexus_server = MockServer::start().await;
-        
+
         Mock::given(method("GET"))
-            .and(path("/docker-local/library/hello-world/latest/manifest.json"))
+            .and(path(
+                "/docker-local/library/hello-world/latest/manifest.json",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
             .mount(&jfrog_server)
             .await;
-            
+
         Mock::given(method("PUT"))
-            .and(path("/repository/docker-target/v2/library/hello-world/manifests/latest"))
+            .and(path(
+                "/repository/docker-target/v2/library/hello-world/manifests/latest",
+            ))
             .respond_with(ResponseTemplate::new(201))
             .mount(&nexus_server)
             .await;
@@ -622,10 +730,11 @@ mod tests {
             token: "nexus".into(),
             token_file: None,
         };
-        
+
         let client = Arc::new(Client::new());
-        let orchestrator = TransferOrchestrator::new(client, jfrog_config, nexus_config, 1, None, None);
-        
+        let orchestrator =
+            TransferOrchestrator::new(client, jfrog_config, nexus_config, 1, None, None);
+
         let artifact = Artifact {
             source_repo: "docker-local".to_string(),
             target_repo: "docker-target".to_string(),
@@ -634,8 +743,13 @@ mod tests {
             sha256: None,
             repo_type: RepoType::Docker,
         };
-        
-        let result = orchestrator.execute_plan(SyncPlan { artifacts: vec![artifact], total_size: 2 }).await;
+
+        let result = orchestrator
+            .execute_plan(SyncPlan {
+                artifacts: vec![artifact],
+                total_size: 2,
+            })
+            .await;
         assert!(result.is_ok());
     }
 
@@ -643,13 +757,13 @@ mod tests {
     async fn test_transfer_hash_mismatch_failure() {
         let jfrog_server = MockServer::start().await;
         let nexus_server = MockServer::start().await;
-        
+
         Mock::given(method("GET"))
             .and(path("/maven-local/bad-hash.jar"))
             .respond_with(ResponseTemplate::new(200).set_body_string("corrupted-content"))
             .mount(&jfrog_server)
             .await;
-            
+
         Mock::given(method("PUT"))
             .and(path("/repository/maven-target/bad-hash.jar"))
             .respond_with(ResponseTemplate::new(201))
@@ -674,21 +788,38 @@ mod tests {
             token: "nexus".into(),
             token_file: None,
         };
-        
+
         let client = Arc::new(Client::new());
-        let _orchestrator = TransferOrchestrator::new(client.clone(), jfrog_config.clone(), nexus_config.clone(), 1, None, None);
-        
+        let _orchestrator = TransferOrchestrator::new(
+            client.clone(),
+            jfrog_config.clone(),
+            nexus_config.clone(),
+            1,
+            None,
+            None,
+        );
+
         let artifact = Artifact {
             source_repo: "maven-local".to_string(),
             target_repo: "maven-target".to_string(),
             path: "/bad-hash.jar".to_string(),
             size: 17,
-            sha256: Some("5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8".to_string()), 
+            sha256: Some(
+                "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8".to_string(),
+            ),
             repo_type: RepoType::Maven,
         };
-        
+
         // TransferOrchestrator::transfer_artifact should return Err
-        let result = TransferOrchestrator::transfer_artifact(&client, &jfrog_config, &nexus_config, artifact, None, None).await;
+        let result = TransferOrchestrator::transfer_artifact(
+            &client,
+            &jfrog_config,
+            &nexus_config,
+            artifact,
+            None,
+            None,
+        )
+        .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Data corruption"));
     }
@@ -697,7 +828,7 @@ mod tests {
     async fn test_transfer_resume_skip() {
         let jfrog_server = MockServer::start().await;
         let nexus_server = MockServer::start().await;
-        
+
         // No mocks for GET or PUT because they should be skipped!
 
         let jfrog_config = JfrogConfig {
@@ -710,18 +841,36 @@ mod tests {
             token: "nexus".into(),
             token_file: None,
         };
-        
+
         // Initialize state store and mark as complete
         let db_dir = tempfile::tempdir().unwrap();
         let db_path = db_dir.path().join("test.db");
         let db_path_str = format!("sqlite://{}", db_path.to_str().unwrap());
-        
-        let state_store = crate::engine::state_store::StateStore::new(&db_path_str).await.unwrap();
-        state_store.mark_completed("maven-local", "/already-done.jar", "maven-target", "abcd", 123).await.unwrap();
-        
+
+        let state_store = crate::engine::state_store::StateStore::new(&db_path_str)
+            .await
+            .unwrap();
+        state_store
+            .mark_completed(
+                "maven-local",
+                "/already-done.jar",
+                "maven-target",
+                "abcd",
+                123,
+            )
+            .await
+            .unwrap();
+
         let client = Arc::new(Client::new());
-        let orchestrator = TransferOrchestrator::new(client.clone(), jfrog_config, nexus_config, 1, Some(Arc::new(state_store)), None);
-        
+        let orchestrator = TransferOrchestrator::new(
+            client.clone(),
+            jfrog_config,
+            nexus_config,
+            1,
+            Some(Arc::new(state_store)),
+            None,
+        );
+
         let artifact = Artifact {
             source_repo: "maven-local".to_string(),
             target_repo: "maven-target".to_string(),
@@ -730,8 +879,13 @@ mod tests {
             sha256: Some("abcd".to_string()),
             repo_type: RepoType::Maven,
         };
-        
-        let result = orchestrator.execute_plan(SyncPlan { artifacts: vec![artifact], total_size: 123 }).await;
+
+        let result = orchestrator
+            .execute_plan(SyncPlan {
+                artifacts: vec![artifact],
+                total_size: 123,
+            })
+            .await;
         assert!(result.is_ok());
     }
 
@@ -739,7 +893,7 @@ mod tests {
     async fn test_transfer_retry_success() {
         let jfrog_server = MockServer::start().await;
         let nexus_server = MockServer::start().await;
-        
+
         // Mock JFrog: fail once with 500, then succeed
         Mock::given(method("GET"))
             .and(path("/maven-local/retry.jar"))
@@ -747,13 +901,13 @@ mod tests {
             .up_to_n_times(1)
             .mount(&jfrog_server)
             .await;
-            
+
         Mock::given(method("GET"))
             .and(path("/maven-local/retry.jar"))
             .respond_with(ResponseTemplate::new(200).set_body_string("retry-content"))
             .mount(&jfrog_server)
             .await;
-            
+
         Mock::given(method("PUT"))
             .and(path("/repository/maven-target/retry.jar"))
             .respond_with(ResponseTemplate::new(201))
@@ -770,10 +924,11 @@ mod tests {
             token: "nexus".into(),
             token_file: None,
         };
-        
+
         let client = Arc::new(Client::new());
-        let orchestrator = TransferOrchestrator::new(client.clone(), jfrog_config, nexus_config, 1, None, None);
-        
+        let orchestrator =
+            TransferOrchestrator::new(client.clone(), jfrog_config, nexus_config, 1, None, None);
+
         let artifact = Artifact {
             source_repo: "maven-local".to_string(),
             target_repo: "maven-target".to_string(),
@@ -782,8 +937,13 @@ mod tests {
             sha256: None,
             repo_type: RepoType::Maven,
         };
-        
-        let result = orchestrator.execute_plan(SyncPlan { artifacts: vec![artifact], total_size: 13 }).await;
+
+        let result = orchestrator
+            .execute_plan(SyncPlan {
+                artifacts: vec![artifact],
+                total_size: 13,
+            })
+            .await;
         assert!(result.is_ok());
     }
 
@@ -791,7 +951,7 @@ mod tests {
     async fn test_transfer_unauthorized_retry_success() {
         let jfrog_server = MockServer::start().await;
         let nexus_server = MockServer::start().await;
-        
+
         // Mock JFrog: fail once with 401, then succeed
         Mock::given(method("GET"))
             .and(path("/maven-local/auth.jar"))
@@ -799,13 +959,13 @@ mod tests {
             .up_to_n_times(1)
             .mount(&jfrog_server)
             .await;
-            
+
         Mock::given(method("GET"))
             .and(path("/maven-local/auth.jar"))
             .respond_with(ResponseTemplate::new(200).set_body_string("auth-content"))
             .mount(&jfrog_server)
             .await;
-            
+
         Mock::given(method("PUT"))
             .and(path("/repository/maven-target/auth.jar"))
             .respond_with(ResponseTemplate::new(201))
@@ -822,10 +982,11 @@ mod tests {
             token: "nexus".into(),
             token_file: None,
         };
-        
+
         let client = Arc::new(Client::new());
-        let orchestrator = TransferOrchestrator::new(client.clone(), jfrog_config, nexus_config, 1, None, None);
-        
+        let orchestrator =
+            TransferOrchestrator::new(client.clone(), jfrog_config, nexus_config, 1, None, None);
+
         let artifact = Artifact {
             source_repo: "maven-local".to_string(),
             target_repo: "maven-target".to_string(),
@@ -834,8 +995,13 @@ mod tests {
             sha256: None,
             repo_type: RepoType::Maven,
         };
-        
-        let result = orchestrator.execute_plan(SyncPlan { artifacts: vec![artifact], total_size: 12 }).await;
+
+        let result = orchestrator
+            .execute_plan(SyncPlan {
+                artifacts: vec![artifact],
+                total_size: 12,
+            })
+            .await;
         assert!(result.is_ok());
     }
 
@@ -849,13 +1015,17 @@ mod tests {
         let nexus_server = MockServer::start().await;
 
         Mock::given(method("GET"))
-            .and(path("/pypi-local/packages/mylib/mylib-1.0-py3-none-any.whl"))
+            .and(path(
+                "/pypi-local/packages/mylib/mylib-1.0-py3-none-any.whl",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_string("wheel-content"))
             .mount(&jfrog_server)
             .await;
 
         Mock::given(method("PUT"))
-            .and(path("/repository/pypi-target/packages/mylib/mylib-1.0-py3-none-any.whl"))
+            .and(path(
+                "/repository/pypi-target/packages/mylib/mylib-1.0-py3-none-any.whl",
+            ))
             .respond_with(ResponseTemplate::new(201))
             .mount(&nexus_server)
             .await;
@@ -872,7 +1042,8 @@ mod tests {
         };
 
         let client = Arc::new(Client::new());
-        let orchestrator = TransferOrchestrator::new(client, jfrog_config, nexus_config, 1, None, None);
+        let orchestrator =
+            TransferOrchestrator::new(client, jfrog_config, nexus_config, 1, None, None);
 
         let artifact = Artifact {
             source_repo: "pypi-local".to_string(),
@@ -883,7 +1054,12 @@ mod tests {
             repo_type: RepoType::Pypi,
         };
 
-        let result = orchestrator.execute_plan(SyncPlan { artifacts: vec![artifact], total_size: 13 }).await;
+        let result = orchestrator
+            .execute_plan(SyncPlan {
+                artifacts: vec![artifact],
+                total_size: 13,
+            })
+            .await;
         assert!(result.is_ok());
     }
 
@@ -904,7 +1080,9 @@ mod tests {
             .await;
 
         Mock::given(method("PUT"))
-            .and(path("/repository/npm-target/@myorg/mylib/-/mylib-1.0.0.tgz"))
+            .and(path(
+                "/repository/npm-target/@myorg/mylib/-/mylib-1.0.0.tgz",
+            ))
             .respond_with(ResponseTemplate::new(201))
             .mount(&nexus_server)
             .await;
@@ -921,7 +1099,8 @@ mod tests {
         };
 
         let client = Arc::new(Client::new());
-        let orchestrator = TransferOrchestrator::new(client, jfrog_config, nexus_config, 1, None, None);
+        let orchestrator =
+            TransferOrchestrator::new(client, jfrog_config, nexus_config, 1, None, None);
 
         let artifact = Artifact {
             source_repo: "npm-local".to_string(),
@@ -932,7 +1111,12 @@ mod tests {
             repo_type: RepoType::Npm,
         };
 
-        let result = orchestrator.execute_plan(SyncPlan { artifacts: vec![artifact], total_size: 19 }).await;
+        let result = orchestrator
+            .execute_plan(SyncPlan {
+                artifacts: vec![artifact],
+                total_size: 19,
+            })
+            .await;
         assert!(result.is_ok());
     }
 
@@ -952,7 +1136,9 @@ mod tests {
             .await;
 
         Mock::given(method("PUT"))
-            .and(path("/repository/nuget-target/mylib/1.0.0/mylib.1.0.0.nupkg"))
+            .and(path(
+                "/repository/nuget-target/mylib/1.0.0/mylib.1.0.0.nupkg",
+            ))
             .respond_with(ResponseTemplate::new(201))
             .mount(&nexus_server)
             .await;
@@ -969,7 +1155,8 @@ mod tests {
         };
 
         let client = Arc::new(Client::new());
-        let orchestrator = TransferOrchestrator::new(client, jfrog_config, nexus_config, 1, None, None);
+        let orchestrator =
+            TransferOrchestrator::new(client, jfrog_config, nexus_config, 1, None, None);
 
         let artifact = Artifact {
             source_repo: "nuget-local".to_string(),
@@ -980,7 +1167,12 @@ mod tests {
             repo_type: RepoType::Nuget,
         };
 
-        let result = orchestrator.execute_plan(SyncPlan { artifacts: vec![artifact], total_size: 13 }).await;
+        let result = orchestrator
+            .execute_plan(SyncPlan {
+                artifacts: vec![artifact],
+                total_size: 13,
+            })
+            .await;
         assert!(result.is_ok());
     }
 
@@ -1017,7 +1209,8 @@ mod tests {
         };
 
         let client = Arc::new(Client::new());
-        let orchestrator = TransferOrchestrator::new(client, jfrog_config, nexus_config, 1, None, None);
+        let orchestrator =
+            TransferOrchestrator::new(client, jfrog_config, nexus_config, 1, None, None);
 
         let artifact = Artifact {
             source_repo: "helm-local".to_string(),
@@ -1028,7 +1221,12 @@ mod tests {
             repo_type: RepoType::Helm,
         };
 
-        let result = orchestrator.execute_plan(SyncPlan { artifacts: vec![artifact], total_size: 18 }).await;
+        let result = orchestrator
+            .execute_plan(SyncPlan {
+                artifacts: vec![artifact],
+                total_size: 18,
+            })
+            .await;
         assert!(result.is_ok());
     }
 
@@ -1049,7 +1247,9 @@ mod tests {
             .await;
 
         Mock::given(method("PUT"))
-            .and(path("/repository/go-target/github.com/myorg/mylib/@v/v1.0.0.zip"))
+            .and(path(
+                "/repository/go-target/github.com/myorg/mylib/@v/v1.0.0.zip",
+            ))
             .respond_with(ResponseTemplate::new(201))
             .mount(&nexus_server)
             .await;
@@ -1066,7 +1266,8 @@ mod tests {
         };
 
         let client = Arc::new(Client::new());
-        let orchestrator = TransferOrchestrator::new(client, jfrog_config, nexus_config, 1, None, None);
+        let orchestrator =
+            TransferOrchestrator::new(client, jfrog_config, nexus_config, 1, None, None);
 
         let artifact = Artifact {
             source_repo: "go-local".to_string(),
@@ -1077,7 +1278,12 @@ mod tests {
             repo_type: RepoType::Go,
         };
 
-        let result = orchestrator.execute_plan(SyncPlan { artifacts: vec![artifact], total_size: 17 }).await;
+        let result = orchestrator
+            .execute_plan(SyncPlan {
+                artifacts: vec![artifact],
+                total_size: 17,
+            })
+            .await;
         assert!(result.is_ok());
     }
 
@@ -1114,7 +1320,8 @@ mod tests {
         };
 
         let client = Arc::new(Client::new());
-        let orchestrator = TransferOrchestrator::new(client, jfrog_config, nexus_config, 1, None, None);
+        let orchestrator =
+            TransferOrchestrator::new(client, jfrog_config, nexus_config, 1, None, None);
 
         let artifact = Artifact {
             source_repo: "raw-local".to_string(),
@@ -1125,7 +1332,12 @@ mod tests {
             repo_type: RepoType::Raw,
         };
 
-        let result = orchestrator.execute_plan(SyncPlan { artifacts: vec![artifact], total_size: 14 }).await;
+        let result = orchestrator
+            .execute_plan(SyncPlan {
+                artifacts: vec![artifact],
+                total_size: 14,
+            })
+            .await;
         assert!(result.is_ok());
     }
 }
