@@ -1,5 +1,5 @@
 # Builder stage
-FROM rust:1.80-slim-bookworm AS builder
+FROM rust:1.85-slim-bookworm AS builder
 
 # Install build dependencies required by crates (like reqwest/sqlx needing openssl via rustls-tls/native-tls fallback or similar)
 RUN apt-get update && apt-get install -y \
