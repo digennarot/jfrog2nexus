@@ -1,0 +1,7 @@
+target/
+Cargo.lock
+_bmad/
+_bmad-output/
+.git/
+.env
+*.db

@@ -1,0 +1,36 @@
+[package]
+name = "jfrog2nexus"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.32", features = ["full"] }
+clap = { version = "4.4", features = ["derive", "env"] }
+reqwest = { version = "0.11", features = ["json", "rustls-tls", "stream"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+indicatif = "0.17"
+anyhow = "1.0"
+futures = "0.3"
+governor = "0.6"
+nonzero_ext = "0.3"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["json", "env-filter"] }
+thiserror = "2.0.18"
+sha2 = "0.10.9"
+secrecy = { version = "0.10.3", features = ["serde"] }
+url = { version = "2.5.8", features = ["serde"] }
+serde_yml = "0.0.12"
+bytes = "1.11.1"
+sqlx = { version = "0.8.6", features = ["sqlite", "runtime-tokio-rustls", "macros"] }
+metrics = "0.24.3"
+metrics-exporter-prometheus = "0.18.1"
+axum = "0.8.8"
+clap_complete = "4.5.66"
+
+[dev-dependencies]
+assert_cmd = "2.1.2"
+predicates = "3.1.4"
+serial_test = "3.4.0"
+tempfile = "3.25.0"
+wiremock = "0.6.5"

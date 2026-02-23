@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  artifactory:
+    image: releases-docker.jfrog.io/jfrog/artifactory-oss:latest
+    container_name: artifactory
+    ports:
+      - "8081:8081"
+      - "8082:8082"
+    environment:
+      - JF_SHARED_CONFIG_MASTERKEY=12345678901234567890123456789012
+      - JF_ROUTER_ENTRYPOINTS_EXTERNALPORT=8082
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8081/artifactory/api/system/ping" ]
+      interval: 20s
+      timeout: 10s
+      retries: 30
+
+  nexus:
+    image: sonatype/nexus3:latest
+    container_name: nexus
+    ports:
+      - "8083:8081"
+      - "8084:8084"
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8081/service/rest/v1/status" ]
+      interval: 20s
+      timeout: 10s
+      retries: 30

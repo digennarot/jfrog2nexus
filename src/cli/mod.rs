@@ -1,0 +1,15 @@
+pub mod commands;
+
+use clap::Parser;
+use self::commands::Commands;
+
+#[derive(Parser, Debug)]
+#[command(
+    name = "jfrog2nexus", 
+    about = "Migrate from JFrog Artifactory to Nexus", 
+    version = env!("CARGO_PKG_VERSION")
+)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Commands,
+}

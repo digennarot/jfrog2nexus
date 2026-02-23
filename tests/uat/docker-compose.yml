@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  artifactory:
+    image: releases-docker.jfrog.io/jfrog/artifactory-oss:latest
+    container_name: artifactory-uat
+    ports:
+      - "8081:8081"
+      - "8082:8082"
+    environment:
+      - JF_SHARED_NODE_ID=artifactory-uat
+      - JF_SHARED_NODE_IP=artifactory-uat
+    ulimits:
+      nproc: 65535
+      nofile:
+        soft: 65535
+        hard: 65535
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8081/artifactory/api/system/ping || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+  nexus:
+    image: sonatype/nexus3:latest
+    container_name: nexus-uat
+    ports:
+      - "8083:8081"
+    environment:
+      - INSTALL4J_ADD_VM_PARAMS=-Xms2g -Xmx2g -XX:MaxDirectMemorySize=2g
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8081/service/rest/v1/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+volumes:
+  artifactory_data:
+  nexus_data:

@@ -1,0 +1,3 @@
+# SOPS/Age encryption rules
+.env filter=sops
+.nexus_password filter=sops
