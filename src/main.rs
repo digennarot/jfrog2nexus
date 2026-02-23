@@ -1,11 +1,10 @@
 use anyhow::Result;
 use clap::Parser;
-use jfrog2nexus::cli::Cli;
 use jfrog2nexus::cli::commands::{Commands, ConfigSubcommands};
-use tracing::{info, error, warn};
-use tracing_subscriber::EnvFilter;
+use jfrog2nexus::cli::Cli;
 use std::sync::Arc;
-
+use tracing::{error, info, warn};
+use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -21,9 +20,9 @@ async fn main() -> Result<()> {
         Commands::Sync(args) => {
             // Setup metrics
             let metrics_handle = jfrog2nexus::observability::metrics::setup_metrics_recorder();
-            let metrics_addr: std::net::SocketAddr = args.metrics_addr.parse()
-                .expect("Invalid metrics address");
-            
+            let metrics_addr: std::net::SocketAddr =
+                args.metrics_addr.parse().expect("Invalid metrics address");
+
             tokio::spawn(jfrog2nexus::observability::metrics::start_metrics_server(
                 metrics_handle,
                 metrics_addr,
@@ -31,14 +30,16 @@ async fn main() -> Result<()> {
 
             info!(path = %args.config, "Loading configuration for sync");
             let app_config = jfrog2nexus::config::load_config(&args.config).await?;
-            
-            let client = Arc::new(jfrog2nexus::engine::create_client(app_config.proxy.as_ref().map(|p| &p.url))?);
+
+            let client = Arc::new(jfrog2nexus::engine::create_client(
+                app_config.proxy.as_ref().map(|p| &p.url),
+            )?);
             let scanner = jfrog2nexus::engine::scanner::Scanner::new(&client, &app_config.jfrog);
-            
+
             if args.dry_run {
                 info!("Dry-run mode enabled. Scanning repositories...");
                 let plan = scanner.build_plan(&app_config.mappings).await?;
-                
+
                 info!("--- SYNC PLAN ---");
                 for artifact in &plan.artifacts {
                     info!(
@@ -56,15 +57,19 @@ async fn main() -> Result<()> {
             } else {
                 info!("Starting sync execution...");
                 let plan = scanner.build_plan(&app_config.mappings).await?;
-                
+
                 let state_store = if args.resume_by_checksum {
-                    Some(Arc::new(jfrog2nexus::engine::state_store::StateStore::new(".j2n/state.db").await?))
+                    Some(Arc::new(
+                        jfrog2nexus::engine::state_store::StateStore::new(".j2n/state.db").await?,
+                    ))
                 } else {
                     None
                 };
 
                 let rate_limiter = if args.max_kbps > 0 {
-                    Some(jfrog2nexus::engine::throttler::create_limiter(args.max_kbps))
+                    Some(jfrog2nexus::engine::throttler::create_limiter(
+                        args.max_kbps,
+                    ))
                 } else {
                     None
                 };
@@ -77,13 +82,13 @@ async fn main() -> Result<()> {
                     state_store,
                     rate_limiter,
                 );
-                
+
                 if let Err(e) = orchestrator.execute_plan(plan).await {
                     error!(error = %e, "Sync failed");
                     std::process::exit(1);
                 }
             }
-        },
+        }
         Commands::Status(args) => {
             let db_url = format!("sqlite:{}", args.db_path);
             let state_store = jfrog2nexus::engine::state_store::StateStore::new(&db_url).await?;
@@ -96,10 +101,14 @@ async fn main() -> Result<()> {
                 total_migrated_mb = total_size_mb,
                 "Migration Status"
             );
-            
+
             // Try to reach metrics server for real-time info
             let client = reqwest::Client::new();
-            match client.get(format!("{}/metrics", args.metrics_url)).send().await {
+            match client
+                .get(format!("{}/metrics", args.metrics_url))
+                .send()
+                .await
+            {
                 Ok(resp) => {
                     if let Ok(text) = resp.text().await {
                         let mut bytes_total = 0.0;
@@ -124,46 +133,46 @@ async fn main() -> Result<()> {
                     );
                 }
             }
-        },
+        }
         Commands::Report(args) => {
             use jfrog2nexus::cli::commands::ReportSubcommands;
             match args.command {
                 ReportSubcommands::Generate { db_path, output } => {
                     let db_url = format!("sqlite:{}", db_path);
-                    let state_store = jfrog2nexus::engine::state_store::StateStore::new(&db_url).await?;
+                    let state_store =
+                        jfrog2nexus::engine::state_store::StateStore::new(&db_url).await?;
                     let records = state_store.get_all_records().await?;
-                    
+
                     info!(count = records.len(), "Generating audit report");
                     jfrog2nexus::audit::generate_csv_report(&records, &output)?;
                     info!(path = %output, "Audit report generated successfully");
                 }
             }
-        },
+        }
         Commands::GenerateCompletions(args) => {
             use clap::CommandFactory;
             let mut cmd = Cli::command();
             let bin_name = cmd.get_name().to_string();
             clap_complete::generate(args.shell, &mut cmd, bin_name, &mut std::io::stdout());
-        },
-        Commands::Config(args) => {
-            match args.command {
-                ConfigSubcommands::Validate { config } => {
-                    info!(path = %config, "Validating configuration");
-                    let app_config = jfrog2nexus::config::load_config(&config).await?;
-                    
-                    info!("Checking upstream connectivity...");
-                    let client = jfrog2nexus::engine::create_client(app_config.proxy.as_ref().map(|p| &p.url))?;
-                    
-                    jfrog2nexus::engine::check_jfrog_connectivity(&app_config.jfrog, &client).await?;
-                    info!("JFrog connectivity: OK");
-                    
-                    jfrog2nexus::engine::check_nexus_connectivity(&app_config.nexus, &client).await?;
-                    info!("Nexus connectivity: OK");
-                    
-                    info!("Configuration and connectivity are valid");
-                }
-            }
         }
+        Commands::Config(args) => match args.command {
+            ConfigSubcommands::Validate { config } => {
+                info!(path = %config, "Validating configuration");
+                let app_config = jfrog2nexus::config::load_config(&config).await?;
+
+                info!("Checking upstream connectivity...");
+                let client =
+                    jfrog2nexus::engine::create_client(app_config.proxy.as_ref().map(|p| &p.url))?;
+
+                jfrog2nexus::engine::check_jfrog_connectivity(&app_config.jfrog, &client).await?;
+                info!("JFrog connectivity: OK");
+
+                jfrog2nexus::engine::check_nexus_connectivity(&app_config.nexus, &client).await?;
+                info!("Nexus connectivity: OK");
+
+                info!("Configuration and connectivity are valid");
+            }
+        },
     }
 
     Ok(())

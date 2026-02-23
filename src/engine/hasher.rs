@@ -1,9 +1,9 @@
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use bytes::Bytes;
 use futures::Stream;
 use sha2::{Digest, Sha256};
-use bytes::Bytes;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 
 pub struct HashingStream<S> {
     inner: S,

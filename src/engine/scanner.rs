@@ -1,9 +1,9 @@
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
-use secrecy::ExposeSecret;
-use tracing::info;
 use crate::config::{JfrogConfig, RepoType};
 use crate::engine::TransferError;
+use reqwest::Client;
+use secrecy::ExposeSecret;
+use serde::{Deserialize, Serialize};
+use tracing::info;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Artifact {
@@ -38,30 +38,47 @@ impl<'a> Scanner<'a> {
         Self { client, config }
     }
 
-    pub async fn scan_repo(&self, repo_key: &str, target_repo: &str, repo_type: RepoType) -> Result<Vec<Artifact>, TransferError> {
+    pub async fn scan_repo(
+        &self,
+        repo_key: &str,
+        target_repo: &str,
+        repo_type: RepoType,
+    ) -> Result<Vec<Artifact>, TransferError> {
         info!(repo = %repo_key, "Scanning repository");
-        
+
         // For now, using Artifactory File List API which is simple but lacks pagination.
         // In a production tool, AQL would be used for pagination.
-        // Ensure we join safely. 
+        // Ensure we join safely.
         let path = format!("api/storage/{}?list&deep=1", repo_key);
         let url = self.config.url.join(&path)?;
-        
-        let response = self.client
+
+        let response = self
+            .client
             .get(url)
-            .header("Authorization", format!("Bearer {}", self.config.token.expose_secret()))
+            .header(
+                "Authorization",
+                format!("Bearer {}", self.config.token.expose_secret()),
+            )
             .send()
             .await?;
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(TransferError::JfrogApi(format!("Failed to list artifacts in repo {}: {} - {}", repo_key, status, body)));
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(TransferError::JfrogApi(format!(
+                "Failed to list artifacts in repo {}: {} - {}",
+                repo_key, status, body
+            )));
         }
 
         let list_resp: FileListResponse = response.json().await?;
-        
-        let artifacts = list_resp.files.into_iter()
+
+        let artifacts = list_resp
+            .files
+            .into_iter()
             .filter(|f| !f.folder)
             .map(|f| Artifact {
                 source_repo: repo_key.to_string(),
@@ -75,10 +92,15 @@ impl<'a> Scanner<'a> {
         Ok(artifacts)
     }
 
-    pub async fn build_plan(&self, mappings: &[crate::config::RepositoryMapping]) -> Result<SyncPlan, TransferError> {
+    pub async fn build_plan(
+        &self,
+        mappings: &[crate::config::RepositoryMapping],
+    ) -> Result<SyncPlan, TransferError> {
         let mut plan = SyncPlan::default();
         for mapping in mappings {
-            let artifacts = self.scan_repo(&mapping.source, &mapping.target, mapping.r#type).await?;
+            let artifacts = self
+                .scan_repo(&mapping.source, &mapping.target, mapping.r#type)
+                .await?;
             for artifact in artifacts {
                 plan.add_artifact(artifact);
             }
@@ -103,15 +125,15 @@ struct FileEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::RepoType;
+    use url::Url;
     use wiremock::matchers::{method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
-    use url::Url;
-    use crate::config::RepoType;
 
     #[tokio::test]
     async fn test_scan_repo_success() {
         let mock_server = MockServer::start().await;
-        
+
         let response_body = serde_json::json!({
             "files": [
                 {
@@ -145,8 +167,11 @@ mod tests {
         let client = Client::new();
         let scanner = Scanner::new(&client, &config);
 
-        let artifacts = scanner.scan_repo("maven-local", "maven-target", RepoType::Maven).await.unwrap();
-        
+        let artifacts = scanner
+            .scan_repo("maven-local", "maven-target", RepoType::Maven)
+            .await
+            .unwrap();
+
         assert_eq!(artifacts.len(), 1);
         assert_eq!(artifacts[0].path, "/com/example/lib/1.0/lib-1.0.jar");
         assert_eq!(artifacts[0].source_repo, "maven-local");
@@ -157,7 +182,7 @@ mod tests {
     #[tokio::test]
     async fn test_build_plan() {
         let mock_server = MockServer::start().await;
-        
+
         let response_body = serde_json::json!({
             "files": [
                 {
@@ -203,7 +228,7 @@ mod tests {
         ];
 
         let plan = scanner.build_plan(&mappings).await.unwrap();
-        
+
         assert_eq!(plan.artifacts.len(), 2);
         assert_eq!(plan.total_size, 1000);
     }
@@ -255,11 +280,17 @@ mod tests {
         let client = Client::new();
         let scanner = Scanner::new(&client, &config);
 
-        let artifacts = scanner.scan_repo("pypi-local", "pypi-target", RepoType::Pypi).await.unwrap();
+        let artifacts = scanner
+            .scan_repo("pypi-local", "pypi-target", RepoType::Pypi)
+            .await
+            .unwrap();
 
         // Folder entry should be filtered out
         assert_eq!(artifacts.len(), 2);
-        assert_eq!(artifacts[0].path, "/packages/mylib/mylib-1.0-py3-none-any.whl");
+        assert_eq!(
+            artifacts[0].path,
+            "/packages/mylib/mylib-1.0-py3-none-any.whl"
+        );
         assert_eq!(artifacts[0].size, 2048);
         assert_eq!(artifacts[1].path, "/packages/mylib/mylib-1.0.tar.gz");
         assert_eq!(artifacts[1].size, 4096);
@@ -308,7 +339,10 @@ mod tests {
         let client = Client::new();
         let scanner = Scanner::new(&client, &config);
 
-        let artifacts = scanner.scan_repo("npm-local", "npm-target", RepoType::Npm).await.unwrap();
+        let artifacts = scanner
+            .scan_repo("npm-local", "npm-target", RepoType::Npm)
+            .await
+            .unwrap();
 
         assert_eq!(artifacts.len(), 1);
         assert_eq!(artifacts[0].path, "/@myorg/mylib/-/mylib-1.0.0.tgz");

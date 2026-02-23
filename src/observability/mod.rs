@@ -1,2 +1,2 @@
-pub mod metrics;
 pub mod metric_stream;
+pub mod metrics;

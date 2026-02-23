@@ -1,7 +1,7 @@
+use crate::engine::TransferError;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool};
 use std::str::FromStr;
-use crate::engine::TransferError;
-use tracing::{info, debug};
+use tracing::{debug, info};
 
 pub struct StateStore {
     pool: SqlitePool,
@@ -10,7 +10,7 @@ pub struct StateStore {
 impl StateStore {
     pub async fn new(db_path: &str) -> Result<Self, TransferError> {
         info!(path = %db_path, "Initializing StateStore");
-        
+
         let path_without_scheme = match db_path {
             p if p.starts_with("sqlite://") => &p[9..],
             p if p.starts_with("sqlite:") => &p[7..],
@@ -26,15 +26,15 @@ impl StateStore {
             }
         }
 
-        let options = SqliteConnectOptions::from_str(db_path)?
-            .create_if_missing(true);
-        
-        let pool = SqlitePool::connect_with(options).await
+        let options = SqliteConnectOptions::from_str(db_path)?.create_if_missing(true);
+
+        let pool = SqlitePool::connect_with(options)
+            .await
             .map_err(|e| TransferError::Config(format!("Failed to connect to SQLite: {}", e)))?;
 
         let store = Self { pool };
         store.migrate().await?;
-        
+
         Ok(store)
     }
 
@@ -44,7 +44,7 @@ impl StateStore {
             "CREATE TABLE IF NOT EXISTS j2n_metadata (
                 key TEXT PRIMARY KEY,
                 value TEXT
-            )"
+            )",
         )
         .execute(&self.pool)
         .await
@@ -52,11 +52,13 @@ impl StateStore {
 
         // Initialize version if missing
         sqlx::query(
-            "INSERT OR IGNORE INTO j2n_metadata (key, value) VALUES ('schema_version', '1')"
+            "INSERT OR IGNORE INTO j2n_metadata (key, value) VALUES ('schema_version', '1')",
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| TransferError::Config(format!("Failed to initialize schema version: {}", e)))?;
+        .map_err(|e| {
+            TransferError::Config(format!("Failed to initialize schema version: {}", e))
+        })?;
 
         // Main transfer state table
         sqlx::query(
@@ -68,24 +70,28 @@ impl StateStore {
                 size INTEGER,
                 completed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (source_repo, path)
-            )"
+            )",
         )
         .execute(&self.pool)
         .await
         .map_err(|e| TransferError::Config(format!("Migration failed: {}", e)))?;
-        
+
         Ok(())
     }
 
-    pub async fn is_completed(&self, source_repo: &str, path: &str, expected_sha256: Option<&str>) -> bool {
+    pub async fn is_completed(
+        &self,
+        source_repo: &str,
+        path: &str,
+        expected_sha256: Option<&str>,
+    ) -> bool {
         use sqlx::Row;
-        let result = sqlx::query(
-            "SELECT sha256 FROM transfer_state WHERE source_repo = ? AND path = ?"
-        )
-        .bind(source_repo)
-        .bind(path)
-        .fetch_optional(&self.pool)
-        .await;
+        let result =
+            sqlx::query("SELECT sha256 FROM transfer_state WHERE source_repo = ? AND path = ?")
+                .bind(source_repo)
+                .bind(path)
+                .fetch_optional(&self.pool)
+                .await;
 
         match result {
             Ok(Some(row)) => {
@@ -106,15 +112,15 @@ impl StateStore {
     }
 
     pub async fn mark_completed(
-        &self, 
-        source_repo: &str, 
-        path: &str, 
-        target_repo: &str, 
-        sha256: &str, 
-        size: u64
+        &self,
+        source_repo: &str,
+        path: &str,
+        target_repo: &str,
+        sha256: &str,
+        size: u64,
     ) -> Result<(), TransferError> {
         debug!(%path, "Marking artifact as completed in StateStore");
-        
+
         sqlx::query(
             "INSERT OR REPLACE INTO transfer_state (source_repo, path, target_repo, sha256, size) VALUES (?, ?, ?, ?, ?)"
         )
@@ -126,7 +132,7 @@ impl StateStore {
         .execute(&self.pool)
         .await
         .map_err(|e| TransferError::Config(format!("Failed to update state: {}", e)))?;
-        
+
         Ok(())
     }
 
@@ -136,20 +142,22 @@ impl StateStore {
             .fetch_one(&self.pool)
             .await
             .map_err(|e| TransferError::Config(format!("Failed to get stats: {}", e)))?;
-            
+
         let count: i64 = row.get(0);
         let size: i64 = row.try_get(1).unwrap_or(0i64);
-        
+
         Ok((count as u64, size as u64))
     }
 
     pub async fn get_all_records(&self) -> Result<Vec<TransferRecord>, TransferError> {
         use sqlx::Row;
-        let rows = sqlx::query("SELECT source_repo, path, target_repo, sha256, size, completed_at FROM transfer_state")
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| TransferError::Config(format!("Failed to fetch records: {}", e)))?;
-            
+        let rows = sqlx::query(
+            "SELECT source_repo, path, target_repo, sha256, size, completed_at FROM transfer_state",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| TransferError::Config(format!("Failed to fetch records: {}", e)))?;
+
         let mut records = Vec::new();
         for row in rows {
             records.push(TransferRecord {
@@ -161,7 +169,7 @@ impl StateStore {
                 completed_at: row.get(5),
             });
         }
-        
+
         Ok(records)
     }
 }

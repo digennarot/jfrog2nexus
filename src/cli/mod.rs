@@ -1,7 +1,7 @@
 pub mod commands;
 
-use clap::Parser;
 use self::commands::Commands;
+use clap::Parser;
 
 #[derive(Parser, Debug)]
 #[command(

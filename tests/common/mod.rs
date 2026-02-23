@@ -1,14 +1,14 @@
 //! Shared integration test utilities
 
-use std::time::Duration;
 use reqwest::Client;
+use std::time::Duration;
 use tracing::info;
 use wiremock::MockServer;
 
 pub async fn wait_for_service(url: &str) {
     let client = Client::new();
     let max_attempts = 30;
-    
+
     for _ in 0..max_attempts {
         if let Ok(resp) = client.get(url).send().await {
             if resp.status().is_success() {
@@ -17,7 +17,7 @@ pub async fn wait_for_service(url: &str) {
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
-    
+
     panic!("Service at {} did not become ready", url);
 }
 
@@ -35,13 +35,15 @@ impl TestContext {
             .suffix(".yaml")
             .tempfile()
             .expect("Failed to create temp file");
-            
+
         let config_path = temp_file.path().to_string_lossy().to_string();
 
         if std::env::var("J2N_REAL_SERVICES").unwrap_or_default() == "true" {
-            let jfrog_url = std::env::var("JFROG_URL").unwrap_or_else(|_| "http://localhost:8081/".to_string());
-            let nexus_url = std::env::var("NEXUS_URL").unwrap_or_else(|_| "http://localhost:8083/".to_string());
-            
+            let jfrog_url =
+                std::env::var("JFROG_URL").unwrap_or_else(|_| "http://localhost:8081/".to_string());
+            let nexus_url =
+                std::env::var("NEXUS_URL").unwrap_or_else(|_| "http://localhost:8083/".to_string());
+
             let yaml = format!(
                 r#"
 jfrog:
@@ -74,11 +76,10 @@ mappings:
     target: "raw-target"
     type: "raw"
 "#,
-                jfrog_url,
-                nexus_url
+                jfrog_url, nexus_url
             );
             std::fs::write(&config_path, yaml).expect("Failed to write real test config");
-            
+
             return Self {
                 jfrog_server: None,
                 nexus_server: None,
@@ -89,7 +90,7 @@ mappings:
 
         let jfrog_server = MockServer::start().await;
         let nexus_server = MockServer::start().await;
-        
+
         let yaml = format!(
             r#"
 jfrog:
@@ -104,7 +105,7 @@ mappings:
             jfrog_server.uri(),
             nexus_server.uri()
         );
-        
+
         std::fs::write(&config_path, yaml).expect("Failed to write test config");
 
         Self {
@@ -121,7 +122,8 @@ pub mod factories {
         vec![
             "jfrog2nexus".to_string(),
             "sync".to_string(),
-            "--config".to_string(), config_path.to_string(),
+            "--config".to_string(),
+            config_path.to_string(),
         ]
     }
 }

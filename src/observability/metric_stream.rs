@@ -1,8 +1,8 @@
+use bytes::Bytes;
+use futures::Stream;
+use metrics::counter;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use futures::Stream;
-use bytes::Bytes;
-use metrics::counter;
 
 pub struct MetricStream<S> {
     inner: S,
@@ -25,7 +25,8 @@ where
         match Pin::new(&mut self.inner).poll_next(cx) {
             Poll::Ready(Some(Ok(bytes))) => {
                 let len = bytes.len() as u64;
-                counter!("j2n_transfer_bytes_total", "repo" => self.repo_name.clone()).increment(len);
+                counter!("j2n_transfer_bytes_total", "repo" => self.repo_name.clone())
+                    .increment(len);
                 Poll::Ready(Some(Ok(bytes)))
             }
             res => res,

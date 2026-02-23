@@ -1,6 +1,6 @@
-use std::process::Command;
-use assert_cmd::prelude::*;
 use anyhow::Result;
+use assert_cmd::prelude::*;
+use std::process::Command;
 
 #[test]
 fn test_help_output() -> Result<()> {

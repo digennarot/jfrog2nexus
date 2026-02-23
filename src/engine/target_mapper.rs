@@ -3,14 +3,8 @@ use crate::engine::scanner::Artifact;
 
 pub enum TargetApiAction {
     Put { url: String },
-    DockerBlob {
-        name: String,
-        digest: String,
-    },
-    DockerManifest {
-        name: String,
-        reference: String,
-    },
+    DockerBlob { name: String, digest: String },
+    DockerManifest { name: String, reference: String },
 }
 
 pub struct TargetMapper;
@@ -41,11 +35,7 @@ impl TargetMapper {
                 // Heuristic for Docker V2 mapping based on Artifactory storage layout:
                 //   <image>/<tag>/manifest.json  →  DockerManifest
                 //   <image>/_/sha256__<hex>       →  DockerBlob
-                let parts: Vec<&str> = artifact
-                    .path
-                    .trim_start_matches('/')
-                    .split('/')
-                    .collect();
+                let parts: Vec<&str> = artifact.path.trim_start_matches('/').split('/').collect();
 
                 if parts.len() >= 3 {
                     let image_name = parts[..parts.len() - 2].join("/");
@@ -123,10 +113,7 @@ mod tests {
     fn test_map_pypi_sdist() {
         let a = make_artifact(RepoType::Pypi, "/packages/mylib/mylib-1.0.tar.gz");
         let url = put_url(TargetMapper::map_artifact(&a));
-        assert_eq!(
-            url,
-            "repository/tgt-repo/packages/mylib/mylib-1.0.tar.gz"
-        );
+        assert_eq!(url, "repository/tgt-repo/packages/mylib/mylib-1.0.tar.gz");
     }
 
     // ── npm ──────────────────────────────────────────────────────────────────
@@ -135,10 +122,7 @@ mod tests {
     fn test_map_npm_scoped() {
         let a = make_artifact(RepoType::Npm, "/@myorg/mylib/-/mylib-1.0.0.tgz");
         let url = put_url(TargetMapper::map_artifact(&a));
-        assert_eq!(
-            url,
-            "repository/tgt-repo/@myorg/mylib/-/mylib-1.0.0.tgz"
-        );
+        assert_eq!(url, "repository/tgt-repo/@myorg/mylib/-/mylib-1.0.0.tgz");
     }
 
     #[test]
@@ -152,15 +136,9 @@ mod tests {
 
     #[test]
     fn test_map_nuget() {
-        let a = make_artifact(
-            RepoType::Nuget,
-            "/mylib/1.0.0/mylib.1.0.0.nupkg",
-        );
+        let a = make_artifact(RepoType::Nuget, "/mylib/1.0.0/mylib.1.0.0.nupkg");
         let url = put_url(TargetMapper::map_artifact(&a));
-        assert_eq!(
-            url,
-            "repository/tgt-repo/mylib/1.0.0/mylib.1.0.0.nupkg"
-        );
+        assert_eq!(url, "repository/tgt-repo/mylib/1.0.0/mylib.1.0.0.nupkg");
     }
 
     // ── Helm ─────────────────────────────────────────────────────────────────
@@ -176,10 +154,7 @@ mod tests {
 
     #[test]
     fn test_map_go_module_zip() {
-        let a = make_artifact(
-            RepoType::Go,
-            "/github.com/myorg/mylib/@v/v1.0.0.zip",
-        );
+        let a = make_artifact(RepoType::Go, "/github.com/myorg/mylib/@v/v1.0.0.zip");
         let url = put_url(TargetMapper::map_artifact(&a));
         assert_eq!(
             url,
@@ -189,10 +164,7 @@ mod tests {
 
     #[test]
     fn test_map_go_module_info() {
-        let a = make_artifact(
-            RepoType::Go,
-            "/github.com/myorg/mylib/@v/v1.0.0.info",
-        );
+        let a = make_artifact(RepoType::Go, "/github.com/myorg/mylib/@v/v1.0.0.info");
         let url = put_url(TargetMapper::map_artifact(&a));
         assert_eq!(
             url,
@@ -228,10 +200,7 @@ mod tests {
 
     #[test]
     fn test_map_docker_blob() {
-        let a = make_artifact(
-            RepoType::Docker,
-            "/library/hello-world/_/sha256__abcdef",
-        );
+        let a = make_artifact(RepoType::Docker, "/library/hello-world/_/sha256__abcdef");
         match TargetMapper::map_artifact(&a) {
             TargetApiAction::DockerBlob { name, digest } => {
                 assert_eq!(name, "library/hello-world");

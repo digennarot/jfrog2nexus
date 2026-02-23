@@ -1,12 +1,12 @@
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use futures::Stream;
 use bytes::Bytes;
-use governor::{Quota, RateLimiter, state::NotKeyed, state::InMemoryState, clock::DefaultClock};
-use std::sync::Arc;
+use futures::Stream;
+use governor::{clock::DefaultClock, state::InMemoryState, state::NotKeyed, Quota, RateLimiter};
 use nonzero_ext::nonzero;
-use std::num::NonZeroU32;
 use std::future::Future;
+use std::num::NonZeroU32;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
 
 pub type GlobalRateLimiter = RateLimiter<NotKeyed, InMemoryState, DefaultClock>;
 
@@ -19,8 +19,8 @@ pub struct ThrottledStream<S> {
 
 impl<S> ThrottledStream<S> {
     pub fn new(inner: S, limiter: Arc<GlobalRateLimiter>) -> Self {
-        Self { 
-            inner, 
+        Self {
+            inner,
             limiter,
             delay: None,
             pending_bytes: None,
@@ -64,19 +64,24 @@ where
             return Poll::Ready(Some(Ok(bytes)));
         }
 
-        match self.limiter.check_n(NonZeroU32::new(len).unwrap_or(nonzero!(1u32))) {
+        match self
+            .limiter
+            .check_n(NonZeroU32::new(len).unwrap_or(nonzero!(1u32)))
+        {
             Ok(_) => Poll::Ready(Some(Ok(bytes))),
             Err(_) => {
                 // Rate limited. Store bytes and set a delay.
                 self.pending_bytes = Some(bytes);
-                self.delay = Some(Box::pin(tokio::time::sleep(std::time::Duration::from_millis(100))));
-                
+                self.delay = Some(Box::pin(tokio::time::sleep(
+                    std::time::Duration::from_millis(100),
+                )));
+
                 // Poll the newly created delay immediately to register waker
                 if let Some(mut delay) = self.delay.take() {
                     let _ = delay.as_mut().poll(cx);
                     self.delay = Some(delay);
                 }
-                
+
                 Poll::Pending
             }
         }

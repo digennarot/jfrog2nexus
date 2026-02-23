@@ -63,7 +63,9 @@ impl AppConfig {
     pub fn validate(&mut self) -> anyhow::Result<()> {
         // Enforce HTTPS for upstream connections per architecture NFR7
         // Allow HTTP only if explicitly enabled via environment variable (useful for local testing)
-        let allow_http = std::env::var("J2N_ALLOW_HTTP").map(|v| v == "true").unwrap_or(false);
+        let allow_http = std::env::var("J2N_ALLOW_HTTP")
+            .map(|v| v == "true")
+            .unwrap_or(false);
 
         if !allow_http {
             if self.jfrog.url.scheme() != "https" {
@@ -76,10 +78,14 @@ impl AppConfig {
 
         // Ensure trailing slashes for reliable joining
         if !self.jfrog.url.path().ends_with('/') {
-            self.jfrog.url.set_path(&format!("{}/", self.jfrog.url.path()));
+            self.jfrog
+                .url
+                .set_path(&format!("{}/", self.jfrog.url.path()));
         }
         if !self.nexus.url.path().ends_with('/') {
-            self.nexus.url.set_path(&format!("{}/", self.nexus.url.path()));
+            self.nexus
+                .url
+                .set_path(&format!("{}/", self.nexus.url.path()));
         }
 
         // Ensure secrets are provided
@@ -133,7 +139,7 @@ mappings:
         std::env::set_var("J2N_NEXUS_TOKEN", "nexus-secret");
 
         let config = load_config(path).await.expect("Failed to load config");
-        
+
         assert_eq!(config.jfrog.url.as_str(), "https://jfrog.example.com/");
         assert_eq!(config.jfrog.token.expose_secret(), "jfrog-secret");
         assert_eq!(config.mappings.len(), 1);
@@ -179,6 +185,9 @@ mappings: []
         let mut config: AppConfig = serde_yml::from_str(yaml).unwrap();
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("No repository mappings"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No repository mappings"));
     }
 }

@@ -13,7 +13,7 @@ async fn test_migration_sync_flow() {
 
     // GIVEN: Mock servers are running and configured
     let ctx = common::TestContext::new().await;
-    
+
     // 1. Mock JFrog Scanning
     let scan_response = serde_json::json!({
         "files": [
@@ -25,7 +25,7 @@ async fn test_migration_sync_flow() {
             }
         ]
     });
-    
+
     Mock::given(method("GET"))
         .and(path("/api/storage/maven-local"))
         .and(query_param("list", ""))
@@ -43,7 +43,9 @@ async fn test_migration_sync_flow() {
 
     // 3. Mock Nexus Upload
     Mock::given(method("PUT"))
-        .and(path("/repository/maven-target/com/example/lib/1.0/lib-1.0.jar"))
+        .and(path(
+            "/repository/maven-target/com/example/lib/1.0/lib-1.0.jar",
+        ))
         .respond_with(ResponseTemplate::new(201))
         .mount(ctx.nexus_server.as_ref().unwrap())
         .await;
@@ -51,10 +53,13 @@ async fn test_migration_sync_flow() {
     // WHEN: We execute the jfrog2nexus CLI tool
     let mut cmd = Command::new("cargo");
     cmd.arg("run").arg("--");
-    for arg in common::factories::mock_sync_args(&ctx.config_path).into_iter().skip(1) {
+    for arg in common::factories::mock_sync_args(&ctx.config_path)
+        .into_iter()
+        .skip(1)
+    {
         cmd.arg(arg);
     }
-    
+
     // Set necessary environment variables for tokens (since config doesn't include them for security)
     cmd.env("J2N_JFROG_TOKEN", "test-token");
     cmd.env("J2N_NEXUS_TOKEN", "test-token");
@@ -63,17 +68,24 @@ async fn test_migration_sync_flow() {
 
     let output = cmd.output().expect("Failed to execute jfrog2nexus sync");
 
-    // THEN: The sync should execute successfully 
+    // THEN: The sync should execute successfully
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    
+
     if !output.status.success() {
         eprintln!("STDOUT:\n{}", stdout);
         eprintln!("STDERR:\n{}", stderr);
     }
-    
-    assert!(output.status.success(), "Command failed with status: {}", output.status);
-    assert!(stderr.contains("Successfully transferred artifact") || stdout.contains("Successfully transferred artifact"));
+
+    assert!(
+        output.status.success(),
+        "Command failed with status: {}",
+        output.status
+    );
+    assert!(
+        stderr.contains("Successfully transferred artifact")
+            || stdout.contains("Successfully transferred artifact")
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -166,7 +178,11 @@ async fn test_migration_multi_format_flow() {
             .await;
 
         // ── Nexus upload ─────────────────────────────────────────────────────
-        let upload_path = format!("/repository/{}/{}", tgt_repo(_tgt, uri), uri.trim_start_matches('/'));
+        let upload_path = format!(
+            "/repository/{}/{}",
+            tgt_repo(_tgt, uri),
+            uri.trim_start_matches('/')
+        );
         Mock::given(method("PUT"))
             .and(path(upload_path))
             .respond_with(ResponseTemplate::new(201))

@@ -1,16 +1,16 @@
+use crate::config::{JfrogConfig, NexusConfig};
 use anyhow::Result;
 use reqwest::Client;
-use crate::config::{JfrogConfig, NexusConfig};
 use secrecy::ExposeSecret;
-pub mod scanner;
-pub mod transfer;
-pub mod target_mapper;
 pub mod hasher;
-pub mod state_store;
 pub mod retry;
+pub mod scanner;
+pub mod state_store;
+pub mod target_mapper;
 pub mod throttler;
-use tracing::debug;
+pub mod transfer;
 use thiserror::Error;
+use tracing::debug;
 
 #[derive(Error, Debug)]
 pub enum TransferError {
@@ -33,8 +33,7 @@ pub enum TransferError {
 }
 
 pub fn create_client(proxy_url: Option<&url::Url>) -> Result<Client, TransferError> {
-    let mut builder = Client::builder()
-        .user_agent("jfrog2nexus/0.1.0 (Enterprise Migration Tool)");
+    let mut builder = Client::builder().user_agent("jfrog2nexus/0.1.0 (Enterprise Migration Tool)");
 
     if let Some(proxy) = proxy_url {
         debug!(url = %proxy, "Configuring HTTP proxy");
@@ -44,15 +43,21 @@ pub fn create_client(proxy_url: Option<&url::Url>) -> Result<Client, TransferErr
     Ok(builder.build()?)
 }
 
-pub async fn check_jfrog_connectivity(config: &JfrogConfig, client: &Client) -> Result<(), TransferError> {
+pub async fn check_jfrog_connectivity(
+    config: &JfrogConfig,
+    client: &Client,
+) -> Result<(), TransferError> {
     debug!(url = %config.url, "Checking JFrog connectivity");
-    
+
     // JFrog Artifactory ping endpoint
     let ping_url = config.url.join("api/system/ping")?;
-    
+
     let response = client
         .get(ping_url)
-        .header("Authorization", format!("Bearer {}", config.token.expose_secret()))
+        .header(
+            "Authorization",
+            format!("Bearer {}", config.token.expose_secret()),
+        )
         .send()
         .await?;
 
@@ -60,20 +65,29 @@ pub async fn check_jfrog_connectivity(config: &JfrogConfig, client: &Client) -> 
         Ok(())
     } else {
         let status = response.status();
-        let body = response.text().await.unwrap_or_else(|_| "Failed to read error body".to_string());
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Failed to read error body".to_string());
         Err(TransferError::JfrogApi(format!("{} - {}", status, body)))
     }
 }
 
-pub async fn check_nexus_connectivity(config: &NexusConfig, client: &Client) -> Result<(), TransferError> {
+pub async fn check_nexus_connectivity(
+    config: &NexusConfig,
+    client: &Client,
+) -> Result<(), TransferError> {
     debug!(url = %config.url, "Checking Nexus connectivity");
-    
+
     // Nexus Repository Manager status endpoint
     let status_url = config.url.join("service/rest/v1/status")?;
-    
+
     let response = client
         .get(status_url)
-        .header("Authorization", format!("Bearer {}", config.token.expose_secret()))
+        .header(
+            "Authorization",
+            format!("Bearer {}", config.token.expose_secret()),
+        )
         .send()
         .await?;
 
@@ -81,7 +95,10 @@ pub async fn check_nexus_connectivity(config: &NexusConfig, client: &Client) -> 
         Ok(())
     } else {
         let status = response.status();
-        let body = response.text().await.unwrap_or_else(|_| "Failed to read error body".to_string());
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Failed to read error body".to_string());
         Err(TransferError::NexusApi(format!("{} - {}", status, body)))
     }
 }
@@ -89,9 +106,9 @@ pub async fn check_nexus_connectivity(config: &NexusConfig, client: &Client) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wiremock::matchers::{method, path, header};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
     use url::Url;
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[tokio::test]
     async fn test_check_jfrog_connectivity_success() {
@@ -174,6 +191,9 @@ mod tests {
 
         let result = check_nexus_connectivity(&config, &client).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("503 Service Unavailable"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("503 Service Unavailable"));
     }
 }

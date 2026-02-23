@@ -2,11 +2,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::warn;
 
-pub async fn with_retry<F, Fut, T, E>(
-    name: &str,
-    mut f: F,
-    max_retries: usize,
-) -> Result<T, E>
+pub async fn with_retry<F, Fut, T, E>(name: &str, mut f: F, max_retries: usize) -> Result<T, E>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T, E>>,

@@ -1,8 +1,8 @@
-use std::fs::File;
-use std::io::{Write, BufWriter};
-use std::path::Path;
-use anyhow::{Result, Context};
 use crate::engine::state_store::TransferRecord;
+use anyhow::{Context, Result};
+use std::fs::File;
+use std::io::{BufWriter, Write};
+use std::path::Path;
 
 pub fn generate_csv_report(records: &[TransferRecord], output_path: &str) -> Result<()> {
     let path = Path::new(output_path);
@@ -18,7 +18,10 @@ pub fn generate_csv_report(records: &[TransferRecord], output_path: &str) -> Res
     let mut writer = BufWriter::new(file);
 
     // Write header
-    writeln!(writer, "Source Repo,Path,Target Repo,SHA256,Size (Bytes),Completed At")?;
+    writeln!(
+        writer,
+        "Source Repo,Path,Target Repo,SHA256,Size (Bytes),Completed At"
+    )?;
 
     for record in records {
         writeln!(
