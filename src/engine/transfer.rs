@@ -406,7 +406,7 @@ impl TransferOrchestrator {
         // --- Added for Story 2.1: Hash Validation ---
         use sha2::Digest;
         let calculated_hash = {
-            let hasher_lock = hasher.lock().unwrap();
+            let hasher_lock = hasher.lock().expect("hasher lock poisoned");
             format!("{:x}", hasher_lock.clone().finalize())
         };
 

@@ -4,12 +4,23 @@ use metrics::counter;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+/// A stream adapter that increments the `j2n_transfer_bytes_total` Prometheus counter
+/// as bytes flow through it.
+///
+/// Wrap any `reqwest` byte stream with `MetricStream` to get per-repository bandwidth
+/// metrics without modifying transfer logic.
 pub struct MetricStream<S> {
     inner: S,
     repo_name: String,
 }
 
 impl<S> MetricStream<S> {
+    /// Wrap `inner` in a `MetricStream` that labels metrics with `repo_name`.
+    ///
+    /// # Arguments
+    ///
+    /// * `inner` - The underlying byte stream to instrument.
+    /// * `repo_name` - Repository label attached to the Prometheus counter.
     pub fn new(inner: S, repo_name: String) -> Self {
         Self { inner, repo_name }
     }

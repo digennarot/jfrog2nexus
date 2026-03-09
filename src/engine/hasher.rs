@@ -32,7 +32,7 @@ where
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match Pin::new(&mut self.inner).poll_next(cx) {
             Poll::Ready(Some(Ok(bytes))) => {
-                let mut hasher = self.hasher.lock().unwrap();
+                let mut hasher = self.hasher.lock().expect("hasher lock poisoned");
                 hasher.update(&bytes);
                 Poll::Ready(Some(Ok(bytes)))
             }

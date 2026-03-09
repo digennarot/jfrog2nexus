@@ -4,6 +4,23 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
+/// Write all completed transfer records to a CSV file at `output_path`.
+///
+/// The output directory is created if it does not already exist.
+///
+/// # Arguments
+///
+/// * `records` - Slice of [`TransferRecord`]s to serialize (one row per record).
+/// * `output_path` - Filesystem path for the CSV output file.
+///
+/// # Returns
+///
+/// `Ok(())` on success.
+///
+/// # Errors
+///
+/// Returns an error if the output directory cannot be created, the file cannot be
+/// opened for writing, or an I/O error occurs while writing.
 pub fn generate_csv_report(records: &[TransferRecord], output_path: &str) -> Result<()> {
     let path = Path::new(output_path);
     if let Some(parent) = path.parent() {

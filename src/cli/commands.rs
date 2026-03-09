@@ -1,5 +1,6 @@
 use clap::{Args, Subcommand};
 
+/// Top-level subcommands available on the `jfrog2nexus` CLI.
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Sync artifacts from JFrog to Nexus
@@ -14,6 +15,7 @@ pub enum Commands {
     Config(ConfigArgs),
 }
 
+/// Arguments for the `sync` subcommand.
 #[derive(Args, Debug)]
 pub struct SyncArgs {
     /// Path to matching configuration (e.g., j2n.yaml)
@@ -41,6 +43,7 @@ pub struct SyncArgs {
     pub metrics_addr: String,
 }
 
+/// Arguments for the `status` subcommand.
 #[derive(Args, Debug)]
 pub struct StatusArgs {
     /// Path to state database
@@ -52,12 +55,14 @@ pub struct StatusArgs {
     pub metrics_url: String,
 }
 
+/// Arguments for the `report` subcommand.
 #[derive(Args, Debug)]
 pub struct ReportArgs {
     #[command(subcommand)]
     pub command: ReportSubcommands,
 }
 
+/// Subcommands available under `report`.
 #[derive(Subcommand, Debug)]
 pub enum ReportSubcommands {
     /// Generate a CSV audit report
@@ -71,18 +76,21 @@ pub enum ReportSubcommands {
     },
 }
 
+/// Arguments for the `generate-completions` subcommand.
 #[derive(Args, Debug)]
 pub struct GenerateCompletionsArgs {
     /// Shell to generate completions for
     pub shell: clap_complete::Shell,
 }
 
+/// Arguments for the `config` subcommand.
 #[derive(Args, Debug)]
 pub struct ConfigArgs {
     #[command(subcommand)]
     pub command: ConfigSubcommands,
 }
 
+/// Subcommands available under `config`.
 #[derive(Subcommand, Debug)]
 pub enum ConfigSubcommands {
     /// Validate configuration file and environment variables

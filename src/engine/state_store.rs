@@ -3,11 +3,28 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool};
 use std::str::FromStr;
 use tracing::{debug, info};
 
+/// Persistent SQLite-backed store that tracks which artifacts have been transferred.
+///
+/// Used to implement idempotent, resumable migrations: before transferring an artifact
+/// the engine queries `is_completed`; after a successful upload it calls `mark_completed`.
 pub struct StateStore {
     pool: SqlitePool,
 }
 
 impl StateStore {
+    /// Open (or create) the SQLite state database at `db_path` and run migrations.
+    ///
+    /// Accepts bare file paths (`".j2n/state.db"`), `sqlite:` URIs, and the special
+    /// in-memory database `":memory:"`.  Parent directories are created if absent.
+    ///
+    /// # Arguments
+    ///
+    /// * `db_path` - Path or URI for the SQLite database file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransferError`] if the database cannot be opened or the schema
+    /// migration fails.
     pub async fn new(db_path: &str) -> Result<Self, TransferError> {
         info!(path = %db_path, "Initializing StateStore");
 
@@ -79,6 +96,21 @@ impl StateStore {
         Ok(())
     }
 
+    /// Check whether an artifact has already been successfully transferred.
+    ///
+    /// When `expected_sha256` is provided the stored hash must match; a record
+    /// without a matching hash is treated as incomplete (e.g. a partial upload).
+    ///
+    /// # Arguments
+    ///
+    /// * `source_repo` - JFrog repository key.
+    /// * `path` - Artifact path within the repository.
+    /// * `expected_sha256` - Optional SHA-256 hash to verify integrity; may include
+    ///   a `"sha256:"` prefix which is stripped before comparison.
+    ///
+    /// # Returns
+    ///
+    /// `true` if a record exists and the hash matches (or no hash was supplied).
     pub async fn is_completed(
         &self,
         source_repo: &str,
@@ -111,6 +143,22 @@ impl StateStore {
         }
     }
 
+    /// Record a successfully transferred artifact in the state database.
+    ///
+    /// Uses `INSERT OR REPLACE` so re-uploading the same artifact (e.g. after a
+    /// hash mismatch) overwrites the previous record.
+    ///
+    /// # Arguments
+    ///
+    /// * `source_repo` - JFrog repository key.
+    /// * `path` - Artifact path within the repository.
+    /// * `target_repo` - Nexus repository name.
+    /// * `sha256` - Hex-encoded SHA-256 digest of the transferred content.
+    /// * `size` - Size in bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransferError`] if the database write fails.
     pub async fn mark_completed(
         &self,
         source_repo: &str,
@@ -136,6 +184,16 @@ impl StateStore {
         Ok(())
     }
 
+    /// Return aggregate statistics for all completed transfers.
+    ///
+    /// # Returns
+    ///
+    /// A tuple `(count, total_bytes)` where `count` is the number of completed
+    /// artifacts and `total_bytes` is their combined size.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransferError`] if the database query fails.
     pub async fn get_stats(&self) -> Result<(u64, u64), TransferError> {
         use sqlx::Row;
         let row = sqlx::query("SELECT COUNT(*), SUM(size) FROM transfer_state")
@@ -149,6 +207,17 @@ impl StateStore {
         Ok((count as u64, size as u64))
     }
 
+    /// Retrieve all transfer records from the state database.
+    ///
+    /// Used by the audit report generator to produce a full CSV export.
+    ///
+    /// # Returns
+    ///
+    /// A [`Vec`] of [`TransferRecord`]s ordered by insertion time (SQLite default).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransferError`] if the database query fails.
     pub async fn get_all_records(&self) -> Result<Vec<TransferRecord>, TransferError> {
         use sqlx::Row;
         let rows = sqlx::query(
@@ -174,6 +243,7 @@ impl StateStore {
     }
 }
 
+/// A single row from the `transfer_state` table, representing one completed transfer.
 pub struct TransferRecord {
     pub source_repo: String,
     pub path: String,

@@ -2,6 +2,10 @@ use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+/// Top-level application configuration, deserialized from a YAML config file.
+///
+/// Combines JFrog source settings, Nexus target settings, repository mappings,
+/// and an optional proxy configuration.
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppConfig {
     pub jfrog: JfrogConfig,
@@ -10,6 +14,10 @@ pub struct AppConfig {
     pub proxy: Option<ProxyConfig>,
 }
 
+/// Connection settings for the JFrog Artifactory source instance.
+///
+/// The API token is read from the `J2N_JFROG_TOKEN` environment variable when
+/// not supplied in the YAML file.
 #[derive(Debug, Deserialize, Clone)]
 pub struct JfrogConfig {
     pub url: Url,
@@ -18,6 +26,10 @@ pub struct JfrogConfig {
     pub token_file: Option<std::path::PathBuf>,
 }
 
+/// Connection settings for the Sonatype Nexus target instance.
+///
+/// The API token is read from the `J2N_NEXUS_TOKEN` environment variable when
+/// not supplied in the YAML file.
 #[derive(Debug, Deserialize, Clone)]
 pub struct NexusConfig {
     pub url: Url,
@@ -26,6 +38,7 @@ pub struct NexusConfig {
     pub token_file: Option<std::path::PathBuf>,
 }
 
+/// A single source-to-target repository mapping, including the artifact format type.
 #[derive(Debug, Deserialize, Clone)]
 pub struct RepositoryMapping {
     pub source: String,
@@ -33,6 +46,10 @@ pub struct RepositoryMapping {
     pub r#type: RepoType,
 }
 
+/// Supported artifact repository format types.
+///
+/// Controls how artifacts are scanned on JFrog and uploaded to Nexus.
+/// Serialized in lowercase (e.g. `"docker"`, `"maven"`).
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 pub enum RepoType {
@@ -46,6 +63,7 @@ pub enum RepoType {
     Raw,
 }
 
+/// Optional HTTP/HTTPS proxy configuration for outbound connections.
 #[derive(Debug, Deserialize, Clone)]
 pub struct ProxyConfig {
     pub url: Url,
@@ -60,6 +78,14 @@ fn from_env_nexus_token() -> SecretString {
 }
 
 impl AppConfig {
+    /// Validate the configuration, enforcing security and completeness invariants.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Either URL uses HTTP without `J2N_ALLOW_HTTP=true` set in the environment
+    /// - The JFrog or Nexus API token is empty
+    /// - No repository mappings are defined
     pub fn validate(&mut self) -> anyhow::Result<()> {
         // Enforce HTTPS for upstream connections per architecture NFR7
         // Allow HTTP only if explicitly enabled via environment variable (useful for local testing)

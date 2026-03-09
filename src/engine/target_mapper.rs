@@ -1,12 +1,19 @@
 use crate::config::RepoType;
 use crate::engine::scanner::Artifact;
 
+/// The Nexus API action required to upload a specific artifact.
+///
+/// Non-Docker formats use a simple `PUT repository/{repo}/{path}` call.
+/// Docker artifacts require content-addressed blob uploads and signed manifest pushes.
 pub enum TargetApiAction {
     Put { url: String },
     DockerBlob { name: String, digest: String },
     DockerManifest { name: String, reference: String },
 }
 
+/// Maps a source [`Artifact`] to the correct Nexus upload action.
+///
+/// This is a stateless utility struct; all methods are associated functions.
 pub struct TargetMapper;
 
 impl TargetMapper {
@@ -19,6 +26,18 @@ impl TargetMapper {
         }
     }
 
+    /// Determine the correct Nexus upload action for the given artifact.
+    ///
+    /// For Docker repositories this inspects the Artifactory storage path to decide
+    /// between a blob upload and a manifest push.  All other formats use a simple PUT.
+    ///
+    /// # Arguments
+    ///
+    /// * `artifact` - The artifact to map; its `repo_type` and `path` drive the decision.
+    ///
+    /// # Returns
+    ///
+    /// The [`TargetApiAction`] that the transfer engine should execute.
     pub fn map_artifact(artifact: &Artifact) -> TargetApiAction {
         match artifact.repo_type {
             // ── Non-Docker formats all use the simple PUT path ──────────────

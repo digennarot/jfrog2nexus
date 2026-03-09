@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use jfrog2nexus::cli::commands::{Commands, ConfigSubcommands};
 use jfrog2nexus::cli::Cli;
@@ -20,8 +20,10 @@ async fn main() -> Result<()> {
         Commands::Sync(args) => {
             // Setup metrics
             let metrics_handle = jfrog2nexus::observability::metrics::setup_metrics_recorder();
-            let metrics_addr: std::net::SocketAddr =
-                args.metrics_addr.parse().expect("Invalid metrics address");
+            let metrics_addr: std::net::SocketAddr = args
+                .metrics_addr
+                .parse()
+                .with_context(|| format!("Invalid metrics address: '{}'", args.metrics_addr))?;
 
             tokio::spawn(jfrog2nexus::observability::metrics::start_metrics_server(
                 metrics_handle,

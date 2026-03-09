@@ -5,6 +5,7 @@ use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
+/// A single artifact discovered in a JFrog repository, ready to be transferred.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Artifact {
     pub source_repo: String,
@@ -15,6 +16,9 @@ pub struct Artifact {
     pub repo_type: RepoType,
 }
 
+/// A complete migration plan built from one or more repository scans.
+///
+/// Aggregates all discovered [`Artifact`]s and tracks the combined byte size.
 #[derive(Debug, Serialize, Default)]
 pub struct SyncPlan {
     pub artifacts: Vec<Artifact>,
@@ -22,22 +26,51 @@ pub struct SyncPlan {
 }
 
 impl SyncPlan {
+    /// Append an artifact to the plan, updating the running total size.
+    ///
+    /// # Arguments
+    ///
+    /// * `artifact` - The artifact to add; its `size` is added to `total_size`.
     pub fn add_artifact(&mut self, artifact: Artifact) {
         self.total_size += artifact.size;
         self.artifacts.push(artifact);
     }
 }
 
+/// Scans JFrog Artifactory repositories to produce a [`SyncPlan`].
 pub struct Scanner<'a> {
     client: &'a Client,
     config: &'a JfrogConfig,
 }
 
 impl<'a> Scanner<'a> {
+    /// Create a new `Scanner` backed by the given HTTP client and JFrog configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `client` - Shared HTTP client (should be configured with auth/proxy settings).
+    /// * `config` - JFrog connection details including base URL and API token.
     pub fn new(client: &'a Client, config: &'a JfrogConfig) -> Self {
         Self { client, config }
     }
 
+    /// List all non-folder artifacts in a single JFrog repository.
+    ///
+    /// Uses the Artifactory File List API (`api/storage/{repo}?list&deep=1`).
+    ///
+    /// # Arguments
+    ///
+    /// * `repo_key` - JFrog repository key (source).
+    /// * `target_repo` - Nexus repository name (destination), stored on each artifact.
+    /// * `repo_type` - Format of the repository (Maven, Docker, etc.).
+    ///
+    /// # Returns
+    ///
+    /// A list of [`Artifact`]s found in the repository, excluding folder entries.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransferError`] if the HTTP request fails or the API returns a non-2xx status.
     pub async fn scan_repo(
         &self,
         repo_key: &str,
@@ -92,6 +125,19 @@ impl<'a> Scanner<'a> {
         Ok(artifacts)
     }
 
+    /// Scan all configured repository mappings and build a unified [`SyncPlan`].
+    ///
+    /// # Arguments
+    ///
+    /// * `mappings` - Slice of source-to-target repository mappings from the config file.
+    ///
+    /// # Returns
+    ///
+    /// A [`SyncPlan`] containing every artifact found across all mapped repositories.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransferError`] if any individual repository scan fails.
     pub async fn build_plan(
         &self,
         mappings: &[crate::config::RepositoryMapping],
